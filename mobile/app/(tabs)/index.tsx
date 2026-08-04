@@ -1,4 +1,4 @@
-import { typography } from '@/constants/typography';
+import { typography } from '@/src/constants/typography';
 import { Text, View } from 'react-native';
 
 const index = () => {
