@@ -93,7 +93,7 @@ export interface Trip {
 export interface Edge {
   from: string;
   to: string;
-  observations: string;
+  observations: number;
   avg_duration_min: number;
   p90_duration_min: number;
   on_time_rate: number;
