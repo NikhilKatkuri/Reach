@@ -72,3 +72,5 @@ export class JsonCollection<T> {
     this.cache = null;
   }
 }
+
+export type DbType = typeof JsonCollection.prototype;

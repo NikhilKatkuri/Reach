@@ -107,3 +107,10 @@ export interface Graph {
   nodes: string[];
   edges: EdgeDictionary;
 }
+
+export interface Cart {
+  uid: string;
+  name: string;
+}
+
+export type Carts = Cart[];
