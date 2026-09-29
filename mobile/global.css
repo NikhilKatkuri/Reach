@@ -1,0 +1,52 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css";
+
+@import "nativewind/theme";
+
+@theme {
+  /* Material 3 roles, exposed to Tailwind as `bg-surface`, `text-primary`, etc.
+     Values reference the runtime theme variables defined in src/constants/theme.ts
+     so light and dark share one class name. */
+  --color-background: var(--reach-background);
+  --color-on-background: var(--reach-on-background);
+  --color-surface: var(--reach-surface);
+  --color-on-surface: var(--reach-on-surface);
+  --color-surface-variant: var(--reach-surface-variant);
+  --color-on-surface-variant: var(--reach-on-surface-variant);
+  --color-surface-container-lowest: var(--reach-surface-container-lowest);
+  --color-surface-container-low: var(--reach-surface-container-low);
+  --color-surface-container: var(--reach-surface-container);
+  --color-surface-container-high: var(--reach-surface-container-high);
+  --color-surface-container-highest: var(--reach-surface-container-highest);
+  --color-primary: var(--reach-primary);
+  --color-on-primary: var(--reach-on-primary);
+  --color-primary-container: var(--reach-primary-container);
+  --color-on-primary-container: var(--reach-on-primary-container);
+  --color-secondary: var(--reach-secondary);
+  --color-secondary-container: var(--reach-secondary-container);
+  --color-tertiary: var(--reach-tertiary);
+  --color-tertiary-container: var(--reach-tertiary-container);
+  --color-error: var(--reach-error);
+  --color-error-container: var(--reach-error-container);
+  --color-success: var(--reach-success);
+  --color-success-container: var(--reach-success-container);
+  --color-warning: var(--reach-warning);
+  --color-warning-container: var(--reach-warning-container);
+  --color-outline: var(--reach-outline);
+  --color-outline-variant: var(--reach-outline-variant);
+
+  /* MD3 shape scale */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 28px;
+
+  /* Font families */
+  --font-sans: "GoogleSans-Regular";
+  --font-medium: "GoogleSans-Medium";
+  --font-semibold: "GoogleSans-SemiBold";
+  --font-bold: "GoogleSans-Bold";
+  --font-mono: "GoogleSansCode-Medium";
+}

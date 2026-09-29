@@ -1,7 +1,10 @@
 node_modules
-dist
 .expo
-android
-ios
-*.lock
-package-lock.json
+dist
+web-build
+coverage
+pnpm-lock.yaml
+*.ttf
+*.png
+*.icns
+*.car

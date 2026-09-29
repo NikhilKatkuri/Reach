@@ -1,11 +1,13 @@
 allowBuilds:
+  '@parcel/watcher': true
+  '@tailwindcss/oxide': true
   unrs-resolver: false
 minimumReleaseAgeExclude:
-  - '@expo/cli@57.0.12'
-  - '@expo/router-server@57.0.5'
+  - '@expo/cli@57.0.27'
+  - '@expo/router-server@57.0.6'
   - '@expo/ui@57.0.9'
-  - expo-constants@57.0.9
-  - expo-linking@57.0.5
-  - expo-modules-core@57.0.9
-  - expo-router@57.0.10
-  - expo@57.0.10
+  - expo-constants@57.0.19
+  - expo-linking@57.0.11
+  - expo-modules-core@57.0.11
+  - expo-router@57.0.23
+  - expo@57.0.25

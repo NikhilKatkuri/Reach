@@ -2,9 +2,21 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "types": ["jest"],
+    // Explicit so the `@/*` alias means the same thing to every consumer.
+    // TypeScript resolves `paths` relative to this file when `baseUrl` is
+    // absent, but Metro's tsconfig-paths resolver is a separate
+    // implementation; stating `baseUrl` removes any ambiguity between them.
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@/src/*": ["./src/*"],
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts"
+  ]
 }
