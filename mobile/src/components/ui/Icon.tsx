@@ -17,6 +17,7 @@ import {
   ArrowUUpLeftIcon,
   BellIcon,
   BicycleIcon,
+  BuildingsIcon,
   BellRingingIcon,
   BusIcon,
   CalendarBlankIcon,
@@ -38,11 +39,14 @@ import {
   DropIcon,
   DownloadSimpleIcon,
   FlagCheckeredIcon,
+  FlagIcon,
   GearSixIcon,
   GitBranchIcon,
+  GraphIcon,
   InfoIcon,
   KeyIcon,
   LightningIcon,
+  HouseLineIcon,
   MapPinIcon,
   MapTrifoldIcon,
   PathIcon,
@@ -53,6 +57,7 @@ import {
   QuestionIcon,
   ScooterIcon,
   ShareNetworkIcon,
+  SignpostIcon,
   SparkleIcon,
   StackIcon,
   SunHorizonIcon,
@@ -150,6 +155,20 @@ export const ICONS = {
   taxi: TaxiIcon,
   bicycle: BicycleIcon,
   database: DatabaseIcon,
+
+  // Route graph
+  /** A fork in the route graph, shown on junction nodes. */
+  junction: GitBranchIcon,
+  /** Generic graph structure, for the whole-graph affordance. */
+  graph: GraphIcon,
+  /** A signpost, for waypoint and alternative-route nodes. */
+  signpost: SignpostIcon,
+  /** Where a commute starts. */
+  homeIcon: HouseLineIcon,
+  /** A building, for a destination such as a campus or workplace. */
+  building: BuildingsIcon,
+  /** Where a commute ends. */
+  destination: FlagIcon,
 } as const satisfies Record<string, ComponentType<ReachIconProps>>;
 
 /** The name union accepted by {@link Icon}. */

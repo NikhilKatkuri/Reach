@@ -49,6 +49,30 @@ export function useTemplateGraph(
   });
 }
 
+/**
+ * Every template's graph, in one query.
+ *
+ * For list screens that need more than the template row — the commute list
+ * shows the real origin and destination names, which live on the graph's nodes
+ * rather than the template. Fanning out one `useTemplateGraph` per row would
+ * mean N queries and N loading states for data that is small and always wanted
+ * together.
+ */
+export function useTemplateGraphs(): UseQueryResult<
+  NonNullable<Awaited<ReturnType<typeof getTemplateGraph>>>[]
+> {
+  return useQuery({
+    queryKey: [...queryKeys.templates.all, 'graphs'],
+    queryFn: async () => {
+      const templates = await listTemplates();
+      const graphs = await Promise.all(
+        templates.map((template) => template.id).map(async (id) => getTemplateGraph(id)),
+      );
+      return graphs.filter((graph): graph is NonNullable<typeof graph> => graph !== null);
+    },
+  });
+}
+
 /** Lists trips matching the given filters. */
 export function useTripHistory(filters: TripFilters = {}): UseQueryResult<Trip[]> {
   return useQuery({

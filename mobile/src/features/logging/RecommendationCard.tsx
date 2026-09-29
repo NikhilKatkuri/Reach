@@ -14,6 +14,12 @@ import { useTheme } from '@/src/store/theme';
 import { Badge, Card, ProgressRing, RoutePill, StatCard } from '@/src/components/ui';
 import { type Prediction, type RouteCandidate } from '@/src/types/schemas';
 import { type RoutePath } from '@/src/engine/graph';
+import {
+  formatDurationLabel,
+  routeTransferLabel,
+  transferCountFor,
+} from '@/src/engine/routePresentation';
+import { historyDepth, historyDepthSentence } from '@/src/engine/historyDepth';
 import { formatTime } from '@/src/utils/time';
 import { round } from '@/src/utils/math';
 
@@ -27,6 +33,10 @@ export interface RecommendationCardProps {
   readonly slowerThanFastest: boolean;
   /** Minutes slower than the fastest option. */
   readonly tradeoffMinutes: number;
+  /** True when the user picked this route over the engine's pick. */
+  readonly isManualChoice?: boolean;
+  /** Real logged trips behind this route, for the data-depth line. */
+  readonly observations?: number;
 }
 
 /** The primary answer: when to leave, which route, and how confident we are. */
@@ -37,6 +47,8 @@ export function RecommendationCard({
   templateName,
   slowerThanFastest,
   tradeoffMinutes,
+  isManualChoice = false,
+  observations = 0,
 }: RecommendationCardProps) {
   const { colors, type, shape, reducedMotion } = useTheme();
 
@@ -60,10 +72,17 @@ export function RecommendationCard({
             <Text style={[type.labelLarge, { color: colors.onSurfaceVariant }]}>
               {templateName}
             </Text>
-            <Text style={[type.labelMedium, { color: colors.primary }]}>
-              {slowerThanFastest
-                ? `Reliable route · ${Math.round(tradeoffMinutes)} min slower`
-                : 'Fastest and most reliable'}
+            <Text
+              style={[
+                type.labelMedium,
+                { color: isManualChoice ? colors.tertiary : colors.primary },
+              ]}
+            >
+              {isManualChoice
+                ? 'You picked this route'
+                : slowerThanFastest
+                  ? `Reliable route · ${Math.round(tradeoffMinutes)} min slower`
+                  : 'Fastest and most reliable'}
             </Text>
           </View>
           <Badge
@@ -77,7 +96,7 @@ export function RecommendationCard({
             <TimeBlock
               label="Leave by"
               value={formatTime(prediction.leaveBy)}
-              hint={`P90 ${Math.round(prediction.travelTimeP90Min)} min`}
+              hint={`Worst case ${formatDurationLabel(prediction.travelTimeP90Min)}`}
               emphasis
             />
             <TimeBlock
@@ -102,14 +121,36 @@ export function RecommendationCard({
         {candidate !== null ? (
           <RoutePill
             modes={path.modes}
-            transfers={path.hasTransfer ? 1 : 0}
+            transfers={transferCountFor(path, candidate)}
             durationMinutes={prediction.travelTimeP50Min}
-            recommended
+            recommended={!isManualChoice}
             style={styles.pill}
           />
         ) : null}
 
-        {slowerThanFastest ? (
+        {/*
+          The transfer count is stated in words as well as in the pill, because
+          "2 transfers" is a decision the user may want to make differently
+          and the badge is the easiest thing to miss on a small screen.
+        */}
+        <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+          {`${routeTransferLabel(transferCountFor(path, candidate))} · ` +
+            historyDepthSentence(historyDepth(observations), observations)}
+        </Text>
+
+        {isManualChoice ? (
+          <View
+            style={[
+              styles.tradeoff,
+              { backgroundColor: colors.tertiaryContainer, borderRadius: shape.small },
+            ]}
+          >
+            <Text style={[type.bodySmall, { color: colors.onTertiaryContainer }]}>
+              Reach would have suggested a different route. It will still learn from this one — that
+              is how it finds out you prefer it.
+            </Text>
+          </View>
+        ) : slowerThanFastest ? (
           <View
             style={[
               styles.tradeoff,

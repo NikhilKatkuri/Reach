@@ -1,5 +1,7 @@
-import { Text, View, StyleSheet } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Modal, Text, View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/store/theme';
 import {
   Button,
@@ -13,20 +15,52 @@ import {
 import { useTodayTrip } from '@/src/features/logging/useTodayTrip';
 import { ConditionChips } from '@/src/features/logging/ConditionChips';
 import { LoggingPanel } from '@/src/features/logging/LoggingPanel';
-import { RecommendationCard, DurationSpreadRow } from '@/src/features/logging/RecommendationCard';
+import { RecommendationCard } from '@/src/features/logging/RecommendationCard';
 import { WhyThisRouteCard } from '@/src/features/logging/WhyThisRouteCard';
 import { FirstRunCard } from '@/src/features/logging/FirstRunCard';
+import { RouteComparison } from '@/src/features/logging/RouteComparison';
+import { CommuteSwitcher, CommuteSwitcherButton } from '@/src/features/logging/CommuteSwitcher';
+import { historyDepth, historyDepthSentence } from '@/src/engine/historyDepth';
 import { formatDate } from '@/src/utils/time';
 import { useNow } from '@/src/hooks/useNow';
 
 export default function TodayScreen() {
   const { colors, type } = useTheme();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const today = useTodayTrip();
   const now = useNow();
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const hasTemplate = today.templateId !== null;
   const hasPrediction = today.prediction !== null && today.path !== null;
+
+  // Real trips behind the route in use, so the hero card can say whether its
+  // numbers were measured or modelled. Read from the matching candidate rather
+  // than recomputed, because the engine already counted it.
+  const activeObservations = useMemo(() => {
+    if (today.prediction === null || today.path === null) return 0;
+    return (
+      today.prediction.candidates.find((c) => c.signature === today.path?.signature)
+        ?.observedTrips ?? 0
+    );
+  }, [today.prediction, today.path]);
+
+  const compareOptions = useMemo(() => {
+    if (today.prediction === null || today.path === null) return [];
+    return today.prediction.candidates
+      .map((candidate) => ({
+        candidate,
+        path: today.allPaths.find((p) => p.signature === candidate.signature),
+      }))
+      .filter(
+        (
+          entry,
+        ): entry is { candidate: typeof entry.candidate; path: NonNullable<typeof entry.path> } =>
+          entry.path !== undefined,
+      );
+  }, [today.prediction, today.allPaths, today.path]);
 
   // First run: explain the product and offer the one action that matters.
   // Nothing else on this screen is useful yet, so nothing else is shown.
@@ -47,6 +81,14 @@ export default function TodayScreen() {
     <ScreenContainer
       title="Today"
       eyebrow={formatDate(now)}
+      // The commute name is the control, not a label: switching which commute
+      // you are heading for is a decision you make on this screen, every
+      // morning, and it was previously impossible without going to Settings.
+      headerAction={
+        today.sortedCommutes.length > 1 || today.otherCommutesHaveActiveTrip ? (
+          <CommuteSwitcherButton name={today.templateName} onPress={() => setSwitcherOpen(true)} />
+        ) : undefined
+      }
       subtitle={today.destinationName === '' ? undefined : `To ${today.destinationName}`}
       applyTopInset={false}
       footer={
@@ -75,12 +117,28 @@ export default function TodayScreen() {
           <>
             {hasPrediction && today.prediction !== null && today.path !== null ? (
               <RecommendationCard
-                prediction={today.prediction.prediction}
+                prediction={
+                  today.activeForecast === null
+                    ? today.prediction.prediction
+                    : {
+                        ...today.prediction.prediction,
+                        leaveBy: today.activeForecast.leaveBy,
+                        eta: today.activeForecast.eta,
+                        travelTimeP50Min: today.activeForecast.travelTimeP50Min,
+                        travelTimeP90Min: today.activeForecast.travelTimeP90Min,
+                        onTimeProbability: today.activeForecast.onTimeProbability,
+                        reliabilityScore: today.activeForecast.reliabilityScore,
+                      }
+                }
                 path={today.path}
                 candidate={
-                  today.prediction.candidates.find((candidate) => candidate.isRecommended) ?? null
+                  today.prediction.candidates.find(
+                    (candidate) => candidate.signature === today.path?.signature,
+                  ) ?? null
                 }
                 templateName={today.templateName}
+                isManualChoice={today.isRouteOverridden}
+                observations={activeObservations}
                 slowerThanFastest={
                   today.prediction.prediction.travelTimeP50Min >
                   today.prediction.prediction.fastestDurationMin + 1
@@ -93,8 +151,15 @@ export default function TodayScreen() {
               />
             ) : null}
 
-            {today.prediction !== null ? (
-              <DurationSpreadRow prediction={today.prediction.prediction} />
+            {compareOptions.length > 1 ? (
+              <Button
+                label={today.isRouteOverridden ? 'Change route' : 'Choose another route'}
+                icon="swap"
+                variant="tonal"
+                fullWidth
+                onPress={() => setCompareOpen(true)}
+                accessibilityHint="See every route Reach knows, and pick the one you will take"
+              />
             ) : null}
 
             {today.activeTrip !== null ? (
@@ -118,6 +183,8 @@ export default function TodayScreen() {
                 path={today.path}
                 destinationName={today.destinationName || 'your destination'}
                 prediction={today.prediction.prediction}
+                observations={activeObservations}
+                onCompareRoutes={compareOptions.length > 1 ? () => setCompareOpen(true) : undefined}
               />
             ) : null}
 
@@ -130,13 +197,7 @@ export default function TodayScreen() {
                     : Math.round(today.prediction.prediction.confidence * 100),
                 )}
                 unit="%"
-                hint={
-                  today.prediction === null
-                    ? 'No trips logged yet'
-                    : today.prediction.isLowConfidence
-                      ? 'Log a few trips for a sharper estimate'
-                      : 'How much history backs this'
-                }
+                hint={historyDepthSentence(historyDepth(activeObservations), activeObservations)}
                 icon="database"
               />
               <StatCard
@@ -188,7 +249,70 @@ export default function TodayScreen() {
             />
           </Card>
         )}
+        <CommuteSwitcher
+          open={switcherOpen}
+          commutes={today.sortedCommutes}
+          selectedId={today.templateId}
+          activeTripElsewhere={today.otherCommutesHaveActiveTrip}
+          onSelect={(id) => {
+            today.selectCommute(id);
+            setSwitcherOpen(false);
+          }}
+          onReturnToActiveTrip={() => {
+            today.returnToActiveTrip();
+            setSwitcherOpen(false);
+          }}
+          onClose={() => setSwitcherOpen(false)}
+          onCreate={() => {
+            setSwitcherOpen(false);
+            router.push('/(tabs)/(templates)/editor/new');
+          }}
+        />
       </View>
+
+      <Modal
+        visible={compareOpen}
+        animationType="slide"
+        onRequestClose={() => setCompareOpen(false)}
+        transparent
+      >
+        <View style={[styles.sheetBackdrop, { paddingTop: insets.top }]}>
+          <View
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.surfaceContainerLow,
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                paddingBottom: insets.bottom + 8,
+              },
+            ]}
+          >
+            {today.prediction !== null && today.path !== null ? (
+              <RouteComparison
+                stopCount={today.stopCount}
+                options={compareOptions}
+                selectedSignature={today.path.signature}
+                selectedIsRecommended={!today.isRouteOverridden}
+                onSelect={(signature) => {
+                  today.selectRoute(signature);
+                  setCompareOpen(false);
+                }}
+                onUseRecommended={() => {
+                  today.useRecommendedRoute();
+                  setCompareOpen(false);
+                }}
+                onClose={() => setCompareOpen(false)}
+                observations={
+                  new Map(
+                    today.prediction.candidates.map((c) => [c.signature, c.observedTrips ?? 0]),
+                  )
+                }
+              />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -206,5 +330,14 @@ const styles = StyleSheet.create({
   statRow: {
     flexDirection: 'row',
     gap: 12,
+  },
+  sheetBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheet: {
+    maxHeight: '90%',
+    paddingHorizontal: 8,
   },
 });

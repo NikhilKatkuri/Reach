@@ -17,10 +17,32 @@ export interface TripCardProps {
   readonly modes: readonly TransportMode[];
   readonly onPress: () => void;
   readonly testID?: string;
+  /** Name of the commute this trip belongs to. */
+  readonly templateName?: string;
+  /**
+   * How this trip's route compares to the typical time for the same route.
+   *
+   * `null` when the route has not been taken often enough to have a typical
+   * time — showing "faster than usual" against a median of the user's only
+   * other trip would be nonsense.
+   */
+  readonly comparedToTypicalMinutes?: number | null;
+  /** Real trips logged on this exact route, including this one. */
+  readonly routeObservations?: number;
 }
 
 /** A completed trip in the history list. */
-export function TripCard({ trip, weather, traffic, modes, onPress, testID }: TripCardProps) {
+export function TripCard({
+  trip,
+  weather,
+  traffic,
+  modes,
+  onPress,
+  testID,
+  templateName,
+  comparedToTypicalMinutes = null,
+  routeObservations = 0,
+}: TripCardProps) {
   const { colors, type, shape } = useTheme();
 
   const onTime = trip.wasOnTime === true;
@@ -38,9 +60,16 @@ export function TripCard({ trip, weather, traffic, modes, onPress, testID }: Tri
       testID={testID}
     >
       <View style={styles.headerRow}>
-        <Text style={[type.titleSmall, { color: colors.onSurface }]}>
-          {formatDate(trip.startedAt)}
-        </Text>
+        <View style={styles.headerText}>
+          <Text style={[type.titleSmall, { color: colors.onSurface }]}>
+            {formatDate(trip.startedAt)}
+          </Text>
+          {templateName !== undefined ? (
+            <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
+              {templateName}
+            </Text>
+          ) : null}
+        </View>
         <Badge
           label={onTime ? 'On time' : formatDelay(delay)}
           tone={onTime ? 'success' : delay > 10 ? 'error' : 'warning'}
@@ -103,6 +132,20 @@ export function TripCard({ trip, weather, traffic, modes, onPress, testID }: Tri
         ) : null}
       </View>
 
+      {/*
+        Route context rather than per-trip context. "This route is usually 42
+        min" is the number that explains why Reach recommends it, and it is what
+        a user needs to judge whether this particular trip was normal.
+      */}
+      {comparedToTypicalMinutes !== null ? (
+        <View style={styles.reliabilityRow}>
+          <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
+            {`${formatDuration(comparedToTypicalMinutes)} is typical for this route` +
+              (routeObservations > 1 ? ` (${routeObservations} trips)` : '')}
+          </Text>
+        </View>
+      ) : null}
+
       {trip.reliabilityScore !== null ? (
         <View style={styles.reliabilityRow}>
           <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
@@ -127,6 +170,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
+  },
+  headerText: {
+    flex: 1,
+    gap: 1,
   },
   timeRow: {
     flexDirection: 'row',

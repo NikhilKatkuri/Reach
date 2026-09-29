@@ -22,6 +22,11 @@ export interface ScreenContainerProps {
   readonly eyebrow?: string;
   /** Sticks to the bottom, above the safe-area inset. */
   readonly footer?: ReactNode;
+  /**
+   * Rendered beside the title, e.g. a control that changes what the screen is
+   * about. Sized to sit on the title's baseline rather than floating above it.
+   */
+  readonly headerAction?: ReactNode;
   readonly scrollable?: boolean;
   /** Extra bottom padding for lists, in dp. */
   readonly bottomInset?: number;
@@ -40,6 +45,7 @@ export function ScreenContainer({
   subtitle,
   eyebrow,
   footer,
+  headerAction,
   scrollable = true,
   bottomInset = 0,
   applyTopInset = true,
@@ -58,13 +64,18 @@ export function ScreenContainer({
           <Text style={[type.labelMedium, { color: colors.primary }]}>{eyebrow}</Text>
         ) : null}
         {title !== undefined ? (
-          <Text
-            accessibilityRole="header"
-            style={[type.displaySmall, styles.title, { color: colors.onBackground }]}
-          >
-            {title}
-          </Text>
-        ) : null}
+          <View style={styles.titleRow}>
+            <Text
+              accessibilityRole="header"
+              style={[type.displaySmall, styles.title, { color: colors.onBackground }]}
+            >
+              {title}
+            </Text>
+            {headerAction}
+          </View>
+        ) : (
+          headerAction
+        )}
         {subtitle !== undefined ? (
           <Text style={[type.bodyMedium, { color: colors.onSurfaceVariant }]}>{subtitle}</Text>
         ) : null}
@@ -134,6 +145,13 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
   },
   header: {
     paddingHorizontal: 20,

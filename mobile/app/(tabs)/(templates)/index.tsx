@@ -1,10 +1,11 @@
-/** Templates list: saved commutes with their current reliability. */
+/** Commutes list: each saved journey with what Reach has measured for it. */
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/src/store/theme';
 import { Badge, Button, Card, ScreenList } from '@/src/components/ui';
-import { useTemplates, useTripHistory } from '@/src/hooks/useTrips';
+import { useTemplates, useTripHistory, useTemplateGraphs } from '@/src/hooks/useTrips';
+import { buildGraph } from '@/src/engine/graph';
 import { summarizeDurations } from '@/src/engine/statistics';
 import { formatDuration } from '@/src/utils/time';
 import { formatPercent } from '@/src/utils/math';
@@ -16,6 +17,27 @@ export default function TemplatesScreen() {
   const templates = useTemplates();
   const total = templates.data?.length ?? 0;
   const trips = useTripHistory({ status: 'completed', limit: 1000 });
+
+  // Place names come from the graph's origin/destination nodes rather than the
+  // template row, since the nodes are what the user actually sees in the
+  // editor and the two can disagree after a role change.
+  const graphQuery = useTemplateGraphs();
+
+  const endpointsByTemplate = useMemo(() => {
+    const out = new Map<string, { origin: string; destination: string; stops: number }>();
+    for (const graph of graphQuery.data ?? []) {
+      const built = buildGraph(graph);
+      const origin = built.effectiveOrigin;
+      const destination = built.effectiveDestination;
+      if (origin === null || destination === null) continue;
+      out.set(graph.template.id, {
+        origin: origin.name,
+        destination: destination.name,
+        stops: built.orderedStops.length,
+      });
+    }
+    return out;
+  }, [graphQuery.data]);
 
   const statsByTemplate = useMemo(() => {
     const grouped = new Map<string, number[]>();
@@ -56,7 +78,12 @@ export default function TemplatesScreen() {
           <View style={styles.headerText}>
             <Text style={[type.titleMedium, { color: colors.onSurface }]}>{item.name}</Text>
             <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
-              {`${item.originName} → ${item.destinationName}`}
+              {(() => {
+                const endpoints = endpointsByTemplate.get(item.id);
+                const place = `${endpoints?.origin ?? item.originName} → ${endpoints?.destination ?? item.destinationName}`;
+                const stops = endpoints?.stops ?? 0;
+                return stops > 2 ? `${place} · ${stops} places` : place;
+              })()}
             </Text>
           </View>
           {item.isDefault && total > 1 ? <Badge label="Default" tone="primary" /> : null}
@@ -76,7 +103,8 @@ export default function TemplatesScreen() {
           </View>
         ) : (
           <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
-            No trips logged yet. Reach will still estimate from the legs you define.
+            No trips yet. Reach will estimate from the legs you set, and get more accurate as you
+            log.
           </Text>
         )}
 
@@ -101,11 +129,9 @@ export default function TemplatesScreen() {
 
   return (
     <ScreenList
-      title="Templates"
+      title="Your commutes"
       subtitle={
-        total === 0
-          ? 'Reusable journeys Reach learns from'
-          : `${total} commute${total === 1 ? '' : 's'}`
+        total === 0 ? 'Journeys Reach learns from' : `${total} commute${total === 1 ? '' : 's'}`
       }
       footer={
         <Button

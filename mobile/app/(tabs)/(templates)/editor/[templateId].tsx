@@ -1,10 +1,17 @@
 /**
  * Template builder: create and edit a commute as a route graph.
  *
- * The screen is a thin shell over `useTemplateEditor` and the graph engine.
- * All business logic — validation, route enumeration, persistence — lives in
- * `src/features/templates` and `src/engine`, so this file is only layout and
- * event wiring.
+ * Structure, in the order a user meets it:
+ *
+ *  1. Commute information — name
+ *  2. Route graph — the diagram, and the only way to add a connection
+ *  3. Validation — what still needs attention
+ *  4. Ways you can get there — what Reach can learn
+ *  5. Save
+ *
+ * This file is a shell. Graph logic lives in `src/engine`, the sheets and
+ * cards in `src/features/templates`, persistence in `src/db`. It wires them
+ * together and owns nothing else.
  */
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -20,7 +27,8 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/src/store/theme';
-import { Badge, Button, Card, Chip, EmptyState, Icon, RoutePill } from '@/src/components/ui';
+import { Button, Card, Icon, RouteGraph } from '@/src/components/ui';
+import { modeIconName } from '@/src/components/ui/Icon';
 import { useTemplateGraph } from '@/src/hooks/useTrips';
 import { useTemplateEditor } from '@/src/store/templateEditor';
 import {
@@ -28,19 +36,29 @@ import {
   TemplateValidationError,
   validateDraft,
 } from '@/src/features/templates/service';
+import { GraphValidation } from '@/src/features/templates/GraphValidation';
+import { PlaceList } from '@/src/features/templates/PlaceList';
+import { PatternPicker } from '@/src/features/templates/PatternPicker';
+import { ChainEditor } from '@/src/features/templates/ChainEditor';
+import { COMMUTE_PRESETS, instantiatePreset } from '@/src/features/templates/presets';
+import { RoutePreview } from '@/src/features/templates/RoutePreview';
+import { ConnectionEditor } from '@/src/features/templates/ConnectionEditor';
+import { QuickStart } from '@/src/features/templates/QuickStart';
+import type { QuickStartResult } from '@/src/features/templates/QuickStart';
+import type { ConnectionDraft } from '@/src/features/templates/ConnectionEditor';
 import { analyzeTemplate } from '@/src/engine/graph';
+import { formatDurationLabel } from '@/src/engine/routePresentation';
 import { MODE_LABELS } from '@/src/constants/modes';
-import { modeIconName } from '@/src/components/ui/Icon';
-import { TRANSPORT_MODES, type StopKind, type TransportMode as Mode } from '@/src/types/schemas';
-
+import { resolveNodeRole, type NodeRole, type Stop } from '@/src/types/schemas';
 import { queryKeys } from '@/src/store/queryClient';
+import { uuid } from '@/src/lib/uuid';
 
-const STOP_KINDS: readonly { value: StopKind; label: string }[] = [
-  { value: 'stop', label: 'Stop' },
-  { value: 'station', label: 'Station' },
-  { value: 'home', label: 'Home' },
-  { value: 'office', label: 'Office' },
-];
+const NODE_ROLE_LABELS: Readonly<Record<NodeRole, string>> = {
+  origin: 'Start',
+  destination: 'Destination',
+  junction: 'Junction',
+  stop: 'Stop',
+};
 
 export default function TemplateEditorScreen() {
   const { templateId = 'new' } = useLocalSearchParams<{ templateId: string }>();
@@ -60,22 +78,38 @@ export default function TemplateEditorScreen() {
     renameStop,
     removeStop,
     moveStop,
+    setStopRole,
     addSegment,
-    updateSegment,
+    addAlternative,
     removeSegment,
+    setConnection,
+    clearConnection,
+    loadStops,
+    setEndpoints,
   } = useTemplateEditor();
 
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const [selectedFrom, setSelectedFrom] = useState<string | null>(null);
+  /** Node the user is working from, or null when nothing is selected. */
+  const [focusStopId, setFocusStopId] = useState<string | null>(null);
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  /**
+   * Which half of the builder is showing.
+   *
+   * Two steps rather than one long form, because naming your places and timing
+   * your legs are separate thoughts. It also gives the graph view a place to
+   * live where it is not competing with nine form fields.
+   */
+  const [step, setStep] = useState<'places' | 'route'>('places');
 
-  // Load the template into the editor once it arrives.
-  //
-  // This is React's "adjust state when an input changes" pattern rather than a
-  // `useEffect`: the store write happens during the same render that notices
-  // the change, so the first painted frame already shows the loaded draft.
-  // An effect would paint an empty editor and then repaint, and would be
-  // flagged for the cascading render it causes.
+  /*
+   * Load the template into the editor once it arrives.
+   *
+   * React's "adjust state when an input changes" pattern rather than an
+   * effect: the store write happens during the render that notices the change,
+   * so the first painted frame already shows the loaded draft. An effect would
+   * paint an empty editor and then repaint.
+   */
   const loadedKey = isNew ? 'new' : (graphQuery.data?.template.id ?? null);
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
 
@@ -84,31 +118,30 @@ export default function TemplateEditorScreen() {
     load(isNew ? null : (graphQuery.data ?? null));
   }
 
-  const analysis = useMemo(() => {
-    if (draft.stops.length < 2) return null;
-    return analyzeTemplate({
-      template: {
-        id: draft.id,
-        name: draft.name,
-        originName: draft.originName,
-        destinationName: draft.destinationName,
-        colorSeed: '#00639B',
-        notes: draft.notes,
-        isArchived: false,
-        isDefault: false,
-        sortOrder: 0,
-        createdAt: 0,
-        updatedAt: 0,
-      },
-      stops: draft.stops,
-      segments: draft.segments,
-    });
-  }, [draft]);
-
-  const orderedStops = useMemo(
-    () => [...draft.stops].sort((a, b) => a.sortOrder - b.sortOrder),
-    [draft.stops],
+  const analysis = useMemo(
+    () =>
+      analyzeTemplate({
+        template: {
+          id: draft.id,
+          name: draft.name,
+          originName: draft.originName,
+          destinationName: draft.destinationName,
+          colorSeed: '#00639B',
+          notes: draft.notes,
+          isArchived: false,
+          isDefault: false,
+          sortOrder: 0,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        stops: draft.stops,
+        segments: draft.segments,
+      }),
+    [draft],
   );
+
+  const focusStop: Stop | null =
+    focusStopId === null ? null : (draft.stops.find((s) => s.id === focusStopId) ?? null);
 
   const onSave = useCallback(async () => {
     const issues = validateDraft({
@@ -146,7 +179,7 @@ export default function TemplateEditorScreen() {
       if (error instanceof TemplateValidationError) {
         setErrors([...error.issues]);
       } else {
-        setErrors([error instanceof Error ? error.message : 'Could not save this template.']);
+        setErrors([error instanceof Error ? error.message : 'Could not save this commute.']);
       }
     } finally {
       setSaving(false);
@@ -161,26 +194,114 @@ export default function TemplateEditorScreen() {
     router.back();
   }, [isNew, templateId, queryClient, router]);
 
+  /**
+   * Turns a submitted sheet into a node (if needed) plus a connection.
+   *
+   * Two details worth stating. A brand-new place is created as a plain stop,
+   * because the sheet did not ask what kind of place it is and guessing would
+   * be worse than the neutral default. And when the node already has a
+   * connection leaving it, this is an *alternative route*, so it goes through
+   * `addAlternative`, which promotes the fork to a junction.
+   */
+  const onConnectionSubmit = useCallback(
+    (input: ConnectionDraft) => {
+      const toStopId = input.toStopId ?? addStop(input.newNodeName ?? 'New place', 'stop', 'stop');
+
+      const alreadyHasOutgoing = draft.segments.some(
+        (segment) => segment.fromStopId === input.fromStopId,
+      );
+
+      if (alreadyHasOutgoing) {
+        addAlternative({
+          fromStopId: input.fromStopId,
+          toStopId,
+          mode: input.mode,
+          expectedDurationMin: input.expectedDurationMin,
+          serviceLabel: input.serviceLabel,
+          bufferMinutes: input.bufferMinutes,
+        });
+      } else {
+        addSegment({
+          fromStopId: input.fromStopId,
+          toStopId,
+          mode: input.mode,
+          expectedDurationMin: input.expectedDurationMin,
+          serviceLabel: input.serviceLabel,
+          bufferMinutes: input.bufferMinutes,
+        });
+      }
+
+      setConnectionOpen(false);
+    },
+    [addAlternative, addSegment, addStop, draft.segments],
+  );
+
+  /*
+   * A brand-new commute starts on the quick path. It hands back a complete,
+   * valid graph, so by the time the full editor appears there is already
+   * something to edit rather than a blank page.
+   */
+  if (draft.stops.length === 0) {
+    return (
+      <KeyboardAvoidingView
+        style={[styles.flex, { backgroundColor: colors.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Stack.Screen options={{ title: 'New commute' }} />
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <QuickStart
+            onComplete={(result: QuickStartResult) => {
+              setEndpoints({
+                name: result.name,
+                originName: result.startName,
+                destinationName: result.destinationName,
+              });
+              // Seed just the two endpoints. The journey is built in the
+              // editor, one flow, rather than being pre-assembled here.
+              const now = Date.now();
+              loadStops(
+                [
+                  {
+                    id: uuid(),
+                    templateId: draft.id,
+                    name: result.startName,
+                    kind: 'home',
+                    nodeRole: 'origin',
+                    latitude: null,
+                    longitude: null,
+                    sortOrder: 0,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                  {
+                    id: uuid(),
+                    templateId: draft.id,
+                    name: result.destinationName,
+                    kind: 'office',
+                    nodeRole: 'destination',
+                    latitude: null,
+                    longitude: null,
+                    sortOrder: 1,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                ],
+                [],
+              );
+              setStep('places');
+            }}
+          />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.flex, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Stack.Screen
-        options={{
-          title: isNew ? 'New commute' : draft.name || 'Edit commute',
-          headerRight: () => (
-            <Button
-              label="Save"
-              size="small"
-              onPress={() => void onSave()}
-              loading={saving}
-              disabled={!isDirty && !isNew}
-              accessibilityHint="Saves this template to the local database"
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: isNew ? 'New commute' : draft.name || 'Edit commute' }} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {isDirty ? (
@@ -191,125 +312,193 @@ export default function TemplateEditorScreen() {
             ]}
           >
             <Text style={[type.labelSmall, { color: colors.onTertiaryContainer }]}>
-              Unsaved changes — nothing is written until you tap Save.
+              Unsaved changes — nothing is stored until you tap Save.
             </Text>
           </View>
         ) : null}
 
+        {/* 1. Commute information */}
         <Card>
-          <Text style={[type.titleMedium, { color: colors.onSurface }]}>Name</Text>
-          <NameField value={draft.name} onChange={setName} />
+          <Text style={[type.titleMedium, { color: colors.onSurface }]}>Commute</Text>
+          <ThemedInput
+            value={draft.name}
+            onChangeText={setName}
+            placeholder="College"
+            accessibilityLabel="Commute name"
+          />
+          <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+            {draft.stops.length === 0
+              ? 'Add your start and destination below.'
+              : `${draft.originName} → ${draft.destinationName}`}
+          </Text>
         </Card>
 
-        <Card>
-          <View style={styles.sectionHeader}>
-            <Text style={[type.titleMedium, { color: colors.onSurface }]}>Stops</Text>
-            <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
-              {`${orderedStops.length} in order`}
-            </Text>
-          </View>
+        {/* Step switch */}
+        <View
+          style={[
+            styles.stepper,
+            { backgroundColor: colors.surfaceContainer, borderRadius: shape.full },
+          ]}
+        >
+          <StepTab label="Places" selected={step === 'places'} onPress={() => setStep('places')} />
+          <StepTab
+            label="Route"
+            selected={step === 'route'}
+            onPress={() => setStep('route')}
+            disabled={draft.stops.length < 2}
+          />
+        </View>
 
-          {orderedStops.length === 0 ? (
-            <EmptyState
-              compact
-              icon="mapPin"
-              title="No stops yet"
-              description="Add Home first, then each stop along the way."
-            />
-          ) : (
-            <View style={styles.stopList}>
-              {orderedStops.map((stop, index) => (
-                <View
-                  key={stop.id}
-                  style={[
-                    styles.stopRow,
-                    {
-                      backgroundColor: colors.surfaceContainer,
-                      borderRadius: shape.medium,
-                      borderColor: selectedFrom === stop.id ? colors.primary : 'transparent',
-                      borderWidth: selectedFrom === stop.id ? 2 : 0,
-                    },
-                  ]}
-                >
-                  <View style={styles.stopOrder}>
-                    <Text style={[type.labelMedium, { color: colors.onSurfaceVariant }]}>
-                      {index + 1}
-                    </Text>
-                  </View>
-
-                  <View style={styles.stopText}>
-                    <TextInputStyled
-                      value={stop.name}
-                      onChangeText={(value) => renameStop(stop.id, value)}
-                      placeholder="Stop name"
-                      style={{ color: colors.onSurface, fontSize: 15, borderRadius: shape.small }}
-                    />
-                    <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
-                      {stop.kind}
-                    </Text>
-                  </View>
-
-                  <View style={styles.stopActions}>
-                    <Button
-                      label="From"
-                      size="small"
-                      variant={selectedFrom === stop.id ? 'tonal' : 'text'}
-                      onPress={() =>
-                        setSelectedFrom((current) => (current === stop.id ? null : stop.id))
-                      }
-                    />
-                    <IconButton
-                      icon="arrowLeft"
-                      label={`Move ${stop.name} up`}
-                      onPress={() => moveStop(stop.id, -1)}
-                      disabled={index === 0}
-                    />
-                    <IconButton
-                      icon="arrowRight"
-                      label={`Move ${stop.name} down`}
-                      onPress={() => moveStop(stop.id, 1)}
-                      disabled={index === orderedStops.length - 1}
-                    />
-                    <IconButton
-                      icon="trash"
-                      label={`Remove ${stop.name}`}
-                      onPress={() => removeStop(stop.id)}
-                      destructive
-                      disabled={orderedStops.length <= 2}
-                    />
-                  </View>
-                </View>
-              ))}
+        {step === 'places' ? (
+          <Card>
+            <View style={styles.sectionHeader}>
+              <Text style={[type.titleMedium, { color: colors.onSurface }]}>
+                Where does your commute go?
+              </Text>
             </View>
-          )}
-
-          <AddStopRow onAdd={addStop} />
-        </Card>
-
-        <Card>
-          <View style={styles.sectionHeader}>
-            <Text style={[type.titleMedium, { color: colors.onSurface }]}>Legs</Text>
-            <Badge label={`${draft.segments.length}`} />
-          </View>
-
-          {draft.segments.length === 0 ? (
-            <EmptyState
-              compact
-              icon="route"
-              title="No legs yet"
-              description={
-                selectedFrom === null
-                  ? 'Tap "From" on a stop, then add a leg to the next one.'
-                  : 'Now add a leg from the highlighted stop.'
-              }
+            <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+              Add every place you go through, in order. You can change anything later.
+            </Text>
+            <PlaceList
+              stops={draft.stops}
+              hasPlaces={draft.stops.length > 0}
+              onAdd={(name) => addStop(name, 'stop')}
+              onRename={renameStop}
+              onRemove={removeStop}
+              onMove={moveStop}
+              onSetRole={setStopRole}
             />
-          ) : (
+
+            {/*
+              Patterns are offered here rather than in a separate flow, so there
+              is one way to build a commute. Only for an untouched draft: a
+              pattern applied over places the user has already named would
+              overwrite their words.
+            */}
+            {draft.stops.length <= 2 && draft.segments.length === 0 ? (
+              <PatternPicker
+                onPick={(presetId) => {
+                  const preset = COMMUTE_PRESETS.find((p) => p.id === presetId);
+                  if (preset === undefined) return;
+                  const built = instantiatePreset(preset, draft.id);
+                  // Keep the names the user just typed for the two endpoints.
+                  const originName = draft.originName;
+                  const destinationName = draft.destinationName;
+                  loadStops(
+                    built.stops.map((stop) => {
+                      if (resolveNodeRole(stop) === 'origin' && originName.trim().length > 0) {
+                        return { ...stop, name: originName.trim(), kind: 'home' as const };
+                      }
+                      if (
+                        resolveNodeRole(stop) === 'destination' &&
+                        destinationName.trim().length > 0
+                      ) {
+                        return { ...stop, name: destinationName.trim(), kind: 'office' as const };
+                      }
+                      return stop;
+                    }),
+                    built.segments,
+                  );
+                }}
+              />
+            ) : null}
+            {draft.stops.length >= 2 ? (
+              <Button
+                label="Next: how you get between them"
+                icon="arrowRight"
+                variant="tonal"
+                fullWidth
+                onPress={() => setStep('route')}
+              />
+            ) : null}
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <View style={styles.sectionHeader}>
+                <Text style={[type.titleMedium, { color: colors.onSurface }]}>
+                  How long between each place?
+                </Text>
+              </View>
+              <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+                Set the usual time for each part, plus any waiting you normally do.
+              </Text>
+              <ChainEditor
+                stops={draft.stops}
+                segments={draft.segments}
+                onSet={(input) => setConnection(input.fromStopId, input.toStopId, input)}
+                onClear={clearConnection}
+                onAddAlternative={(fromStopId) => {
+                  setFocusStopId(fromStopId);
+                  setConnectionOpen(true);
+                }}
+              />
+            </Card>
+
+            <Card variant="outlined">
+              <View style={styles.sectionHeader}>
+                <Text style={[type.titleMedium, { color: colors.onSurface }]}>Your route</Text>
+              </View>
+              <RouteGraph
+                stops={draft.stops}
+                segments={draft.segments}
+                selectedStopId={focusStopId}
+                onSelectStop={(id) => {
+                  setFocusStopId((current) => (current === id ? null : id));
+                }}
+              />
+              <Text style={[type.bodySmall, styles.graphHint, { color: colors.onSurfaceVariant }]}>
+                Tap a place to rename it, change what it is, or add another way from it.
+              </Text>
+              {focusStop !== null ? (
+                <NodeActions
+                  stop={focusStop}
+                  onDismiss={() => setFocusStopId(null)}
+                  onAddConnection={() => setConnectionOpen(true)}
+                  onRename={(name) => renameStop(focusStop.id, name)}
+                  onRole={(role) => setStopRole(focusStop.id, role)}
+                  onRemove={() => {
+                    removeStop(focusStop.id);
+                    setFocusStopId(null);
+                  }}
+                  canRemove={draft.stops.length > 2}
+                />
+              ) : null}
+            </Card>
+          </>
+        )}
+
+        {/* 3. Validation */}
+        {draft.stops.length > 0 ? (
+          <Card variant="outlined">
+            <GraphValidation
+              issues={analysis.issues}
+              onFocusStop={(stopId) => setFocusStopId(stopId)}
+            />
+          </Card>
+        ) : null}
+
+        {/* 4. Routes Reach will consider */}
+        {draft.stops.length > 0 ? (
+          <Card variant="outlined">
+            <RoutePreview graph={analysis.graph} routes={analysis.routes} />
+          </Card>
+        ) : null}
+
+        {draft.segments.length > 0 ? (
+          <Card>
+            <View style={styles.sectionHeader}>
+              <Text style={[type.titleMedium, { color: colors.onSurface }]}>Connections</Text>
+              <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+                {`${draft.segments.length}`}
+              </Text>
+            </View>
             <View style={styles.segmentList}>
               {[...draft.segments]
                 .sort((a, b) => a.sortOrder - b.sortOrder)
                 .map((segment) => {
-                  const from = orderedStops.find((stop) => stop.id === segment.fromStopId);
-                  const to = orderedStops.find((stop) => stop.id === segment.toStopId);
+                  const from = draft.stops.find((s) => s.id === segment.fromStopId);
+                  const to = draft.stops.find((s) => s.id === segment.toStopId);
                   return (
                     <View
                       key={segment.id}
@@ -332,103 +521,23 @@ export default function TemplateEditorScreen() {
                           {`${from?.name ?? '?'} → ${to?.name ?? '?'}`}
                         </Text>
                         <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
-                          {`${segment.serviceLabel ?? MODE_LABELS[segment.mode]} · ${segment.expectedDurationMin} min` +
-                            (segment.bufferMinutes > 0 ? ` + ${segment.bufferMinutes} buffer` : '')}
+                          {`${segment.serviceLabel ?? MODE_LABELS[segment.mode]} · ${formatDurationLabel(segment.expectedDurationMin)}` +
+                            (segment.bufferMinutes > 0 ? ` +${segment.bufferMinutes} waiting` : '')}
                         </Text>
                       </View>
-                      <View style={styles.segmentActions}>
-                        <Button
-                          label={`${segment.expectedDurationMin}m`}
-                          size="small"
-                          variant="text"
-                          onPress={() =>
-                            updateSegment(segment.id, {
-                              expectedDurationMin:
-                                segment.expectedDurationMin >= 60
-                                  ? 5
-                                  : segment.expectedDurationMin + 5,
-                            })
-                          }
-                          accessibilityHint="Increase the expected duration by five minutes"
-                        />
-                        <IconButton
-                          icon="trash"
-                          label="Remove leg"
-                          onPress={() => removeSegment(segment.id)}
-                          destructive
-                        />
-                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove connection from ${from?.name ?? '?'} to ${to?.name ?? '?'}`}
+                        onPress={() => removeSegment(segment.id)}
+                        hitSlop={10}
+                        style={styles.removeButton}
+                      >
+                        <Icon name="trash" size={16} color={colors.error} />
+                      </Pressable>
                     </View>
                   );
                 })}
             </View>
-          )}
-
-          <AddSegmentRow
-            stops={orderedStops}
-            segments={draft.segments}
-            selectedFrom={selectedFrom}
-            onAdd={addSegment}
-            onClearSelection={() => setSelectedFrom(null)}
-          />
-        </Card>
-
-        {analysis !== null ? (
-          <Card variant="outlined">
-            <Text style={[type.titleMedium, { color: colors.onSurface }]}>
-              Routes Reach will consider
-            </Text>
-            <Text style={[type.bodySmall, styles.routesHint, { color: colors.onSurfaceVariant }]}>
-              Reach enumerates every simple path from Home to your destination and scores each one.
-              Add a second leg from the same stop to create an alternative.
-            </Text>
-
-            {analysis.routes.length === 0 ? (
-              <Text style={[type.bodySmall, { color: colors.error }]}>
-                No route connects your origin to your destination yet.
-              </Text>
-            ) : (
-              <View style={styles.routeList}>
-                {analysis.routes.slice(0, 6).map((route) => (
-                  <View key={route.signature} style={styles.routeItem}>
-                    <RoutePill
-                      modes={route.modes}
-                      transfers={route.hasTransfer ? 1 : 0}
-                      durationMinutes={route.expectedDurationMin}
-                    />
-                    <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
-                      {route.stopIds.length} stops
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            {analysis.issues.length > 0 ? (
-              <View style={styles.issues}>
-                {analysis.issues.map((issue) => (
-                  <View key={issue.message} style={styles.issueRow}>
-                    <Icon
-                      name={issue.severity === 'error' ? 'warning' : 'info'}
-                      size={14}
-                      color={issue.severity === 'error' ? colors.error : colors.onSurfaceVariant}
-                    />
-                    <Text
-                      style={[
-                        type.bodySmall,
-                        styles.issueText,
-                        {
-                          color:
-                            issue.severity === 'error' ? colors.error : colors.onSurfaceVariant,
-                        },
-                      ]}
-                    >
-                      {issue.message}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
           </Card>
         ) : null}
 
@@ -445,9 +554,19 @@ export default function TemplateEditorScreen() {
           </Card>
         ) : null}
 
+        <Button
+          label={isNew ? 'Create commute' : 'Save changes'}
+          size="large"
+          fullWidth
+          onPress={() => void onSave()}
+          loading={saving}
+          disabled={!isDirty && !isNew}
+          accessibilityHint="Stores this commute on this device"
+        />
+
         {!isNew ? (
           <Button
-            label="Delete template"
+            label="Delete commute"
             variant="danger"
             fullWidth
             icon="trash"
@@ -455,378 +574,268 @@ export default function TemplateEditorScreen() {
           />
         ) : null}
       </ScrollView>
+
+      <ConnectionEditor
+        visible={connectionOpen}
+        stops={draft.stops}
+        segments={draft.segments}
+        fromStopId={focusStopId ?? ''}
+        title={
+          focusStop !== null &&
+          draft.segments.some((segment) => segment.fromStopId === focusStop.id)
+            ? 'Add another way from here'
+            : 'Add a connection'
+        }
+        onSubmit={onConnectionSubmit}
+        onClose={() => setConnectionOpen(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 /**
- * A controlled text field.
+ * The panel shown for the node the user has selected in the diagram.
  *
- * Deliberately has no local state: the value lives in the editor store, so
- * mirroring it here would need an effect to resynchronise and would cause a
- * cascading render on every keystroke.
+ * Everything about a node lives here rather than being scattered onto the
+ * diagram itself, so the graph stays readable: the diagram communicates
+ * topology, this panel does configuration.
  */
-function NameField({
-  value,
-  onChange,
+function NodeActions({
+  stop,
+  onDismiss,
+  onAddConnection,
+  onRename,
+  onRole,
+  onRemove,
+  canRemove,
 }: {
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-}) {
-  const { colors, shape } = useTheme();
-
-  return (
-    <TextInputStyled
-      value={value}
-      onChangeText={onChange}
-      placeholder="Home → HITAM"
-      accessibilityLabel="Commute name"
-      style={{ color: colors.onSurface, fontSize: 16, borderRadius: shape.small }}
-    />
-  );
-}
-
-function AddStopRow({ onAdd }: { readonly onAdd: (name: string, kind: StopKind) => string }) {
-  const { colors, type, shape } = useTheme();
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<StopKind>('stop');
-
-  return (
-    <View style={styles.addRow}>
-      <TextInputStyled
-        value={name}
-        onChangeText={setName}
-        placeholder="New stop name"
-        style={{ color: colors.onSurface, fontSize: 14, borderRadius: shape.small }}
-      />
-      <View style={styles.kindRow}>
-        {STOP_KINDS.map((option) => (
-          <Chip
-            key={option.value}
-            label={option.label}
-            variant="filter"
-            selected={kind === option.value}
-            onPress={() => setKind(option.value)}
-          />
-        ))}
-      </View>
-      <Button
-        label="Add stop"
-        icon="plus"
-        variant="tonal"
-        onPress={() => {
-          onAdd(name.trim().length > 0 ? name.trim() : `Stop ${Date.now() % 100}`, kind);
-          setName('');
-        }}
-      />
-      <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>
-        Stops are ordered top to bottom. Use the arrows to reorder.
-      </Text>
-    </View>
-  );
-}
-
-function AddSegmentRow({
-  stops,
-  segments,
-  selectedFrom,
-  onAdd,
-  onClearSelection,
-}: {
-  readonly stops: readonly { id: string; name: string; sortOrder: number }[];
-  readonly segments: readonly { id: string; fromStopId: string; toStopId: string }[];
-  readonly selectedFrom: string | null;
-  readonly onAdd: (input: {
-    fromStopId: string;
-    toStopId: string;
-    mode: Mode;
-    expectedDurationMin: number;
-    serviceLabel?: string | null;
-  }) => string;
-  readonly onClearSelection: () => void;
+  readonly stop: Stop;
+  readonly onDismiss: () => void;
+  readonly onAddConnection: () => void;
+  readonly onRename: (name: string) => void;
+  readonly onRole: (role: NodeRole) => void;
+  readonly onRemove: () => void;
+  readonly canRemove: boolean;
 }) {
   const { colors, type, shape } = useTheme();
-  const [mode, setMode] = useState<Mode>('walk');
-  const [minutes, setMinutes] = useState('10');
-
-  const existing = new Set(segments.map((segment) => `${segment.fromStopId}>${segment.toStopId}`));
-
-  // When a stop is selected as the origin, the destination defaults to the
-  // next stop in order, which is what the user almost always wants.
-  const fromId = selectedFrom ?? stops[0]?.id ?? null;
-  const fromIndex = fromId === null ? -1 : stops.findIndex((stop) => stop.id === fromId);
-  const suggestedTo = fromIndex >= 0 ? (stops[fromIndex + 1]?.id ?? null) : null;
-  const [toId, setToId] = useState<string | null>(null);
-
-  const resolvedTo = toId ?? suggestedTo;
+  const currentRole = resolveNodeRole(stop);
 
   return (
     <View
       style={[
-        styles.addRow,
-        { backgroundColor: colors.surfaceContainerLow, borderRadius: shape.medium, padding: 12 },
+        styles.nodePanel,
+        { backgroundColor: colors.surfaceContainerLow, borderRadius: shape.medium },
       ]}
     >
-      <Text style={[type.labelMedium, { color: colors.onSurface }]}>Add a leg</Text>
+      <View style={styles.nodePanelHeader}>
+        <Text style={[type.titleSmall, { color: colors.onSurface }]} numberOfLines={1}>
+          {stop.name}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Stop editing this place"
+          onPress={onDismiss}
+          hitSlop={10}
+        >
+          <Icon name="x" size={16} color={colors.onSurfaceVariant} />
+        </Pressable>
+      </View>
 
-      <View style={styles.kindRow}>
-        {TRANSPORT_MODES.map((option) => (
-          <Chip
-            key={option}
-            label={MODE_LABELS[option]}
-            icon={modeIconName(option)}
-            variant="filter"
-            selected={mode === option}
-            onPress={() => setMode(option)}
+      <ThemedInput
+        value={stop.name}
+        onChangeText={onRename}
+        placeholder="Name"
+        accessibilityLabel={`Name of ${stop.name}`}
+      />
+
+      <View style={styles.chipRow}>
+        {(Object.keys(NODE_ROLE_LABELS) as NodeRole[]).map((role) => (
+          <RoleChip
+            key={role}
+            role={role}
+            selected={currentRole === role}
+            onPress={() => onRole(role)}
           />
         ))}
       </View>
-
-      <View style={styles.legPickers}>
-        <StopPicker
-          label="From"
-          stops={stops}
-          value={fromId}
-          onChange={(next) => {
-            setToId(null);
-            if (selectedFrom !== null) onClearSelection();
-            void next;
-          }}
-        />
-        <StopPicker label="To" stops={stops} value={resolvedTo} onChange={setToId} />
-      </View>
-
-      <View style={styles.minutesRow}>
-        <Text style={[type.labelMedium, { color: colors.onSurfaceVariant }]}>Minutes</Text>
-        <TextInputStyled
-          value={minutes}
-          onChangeText={setMinutes}
-          keyboardType="number-pad"
-          style={{ color: colors.onSurface, fontSize: 14, width: 72, borderRadius: shape.small }}
-        />
-        <Text style={[type.bodySmall, styles.minutesHint, { color: colors.onSurfaceVariant }]}>
-          Typical time, including waiting where relevant.
-        </Text>
-      </View>
+      <Text style={[type.bodySmall, { color: colors.onSurfaceVariant }]}>
+        {currentRole === 'origin'
+          ? 'Where this commute starts.'
+          : currentRole === 'destination'
+            ? 'Where this commute ends.'
+            : currentRole === 'junction'
+              ? 'Routes split or rejoin here.'
+              : 'An ordinary place you pass through.'}
+      </Text>
 
       <Button
-        label="Add leg"
+        label="Add connection"
         icon="plus"
         variant="tonal"
-        disabled={fromId === null || resolvedTo === null || fromId === resolvedTo}
-        onPress={() => {
-          if (fromId === null || resolvedTo === null) return;
-          onAdd({
-            fromStopId: fromId,
-            toStopId: resolvedTo,
-            mode,
-            expectedDurationMin: Math.max(1, Number.parseInt(minutes, 10) || 10),
-            serviceLabel: mode === 'walk' || mode === 'bike' ? null : MODE_LABELS[mode],
-          });
-          setToId(null);
-        }}
+        fullWidth
+        onPress={onAddConnection}
+        accessibilityHint={`Adds a way to get from ${stop.name} to somewhere else`}
       />
 
-      {fromId !== null && resolvedTo !== null && existing.has(`${fromId}>${resolvedTo}`) ? (
-        <Text style={[type.labelSmall, { color: colors.warning }]}>
-          A leg already connects these two stops. Add another to create an alternative branch.
-        </Text>
+      {canRemove ? (
+        <Button
+          label="Remove this place"
+          variant="text"
+          fullWidth
+          onPress={onRemove}
+          accessibilityHint="Also removes any connections that use it"
+        />
       ) : null}
     </View>
   );
 }
 
-function StopPicker({
-  label,
-  stops,
-  value,
-  onChange,
+function RoleChip({
+  role,
+  selected,
+  onPress,
 }: {
-  readonly label: string;
-  readonly stops: readonly { id: string; name: string; sortOrder: number }[];
-  readonly value: string | null;
-  readonly onChange: (id: string) => void;
+  readonly role: NodeRole;
+  readonly selected: boolean;
+  readonly onPress: () => void;
 }) {
-  const { colors, type } = useTheme();
+  const { colors, type, shape } = useTheme();
   return (
-    <View style={styles.picker}>
-      <Text style={[type.labelSmall, { color: colors.onSurfaceVariant }]}>{label}</Text>
-      <View style={styles.kindRow}>
-        {stops.map((stop) => (
-          <Chip
-            key={stop.id}
-            label={stop.name}
-            variant="filter"
-            selected={value === stop.id}
-            onPress={() => onChange(stop.id)}
-          />
-        ))}
-      </View>
-    </View>
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ selected, checked: selected }}
+      accessibilityLabel={NODE_ROLE_LABELS[role]}
+      onPress={onPress}
+      style={[
+        styles.roleChip,
+        {
+          backgroundColor: selected ? colors.secondaryContainer : colors.surfaceContainer,
+          borderColor: selected ? colors.secondary : colors.outlineVariant,
+          borderRadius: shape.small,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          type.labelMedium,
+          { color: selected ? colors.onSecondaryContainer : colors.onSurfaceVariant },
+        ]}
+      >
+        {NODE_ROLE_LABELS[role]}
+      </Text>
+    </Pressable>
   );
 }
 
-/** A themed text input used throughout the builder. */
-function TextInputStyled({ style, ...props }: React.ComponentProps<typeof TextInput>) {
-  const { colors } = useTheme();
+/** One half of the builder's step switch. */
+function StepTab({
+  label,
+  selected,
+  onPress,
+  disabled = false,
+}: {
+  readonly label: string;
+  readonly selected: boolean;
+  readonly onPress: () => void;
+  readonly disabled?: boolean;
+}) {
+  const { colors, type } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected, disabled }}
+      accessibilityLabel={label}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.stepTab,
+        {
+          backgroundColor: selected ? colors.primary : 'transparent',
+          borderRadius: 999,
+          opacity: disabled ? 0.4 : 1,
+        },
+      ]}
+    >
+      <Text
+        style={[type.labelLarge, { color: selected ? colors.onPrimary : colors.onSurfaceVariant }]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ThemedInput(props: React.ComponentProps<typeof TextInput>) {
+  const { colors, type, shape } = useTheme();
   return (
     <TextInput
       {...props}
+      placeholderTextColor={colors.onSurfaceVariant}
       style={[
+        type.bodyMedium,
+        styles.input,
         {
+          color: colors.onSurface,
           backgroundColor: colors.surfaceContainerHighest,
           borderColor: colors.outlineVariant,
-          borderWidth: 1,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
+          borderRadius: shape.small,
         },
-        style,
+        props.style,
       ]}
     />
   );
 }
 
-function IconButton({
-  icon,
-  label,
-  onPress,
-  disabled = false,
-  destructive = false,
-}: {
-  readonly icon: 'arrowLeft' | 'arrowRight' | 'trash';
-  readonly label: string;
-  readonly onPress: () => void;
-  readonly disabled?: boolean;
-  readonly destructive?: boolean;
-}) {
-  const { colors, minTouchTarget } = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={[
-        styles.iconButton,
-        { width: minTouchTarget, height: minTouchTarget, opacity: disabled ? 0.3 : 1 },
-      ]}
-    >
-      <Icon
-        name={icon}
-        size={18}
-        color={destructive ? colors.error : colors.onSurfaceVariant}
-        weight="bold"
-      />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-    gap: 16,
-    paddingBottom: 48,
-  },
+  flex: { flex: 1 },
+  content: { padding: 20, gap: 16, paddingBottom: 48 },
+  dirtyBanner: { paddingHorizontal: 12, paddingVertical: 8 },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 4,
   },
-  stopList: {
-    gap: 8,
-  },
-  stopRow: {
+  stepper: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    gap: 8,
-  },
-  stopOrder: {
-    width: 24,
-    alignItems: 'center',
-  },
-  stopText: {
-    flex: 1,
-  },
-  stopActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  segmentList: {
-    gap: 8,
-  },
-  segmentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    gap: 10,
-  },
-  segmentText: {
-    flex: 1,
-  },
-  segmentActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  addRow: {
-    marginTop: 12,
-    gap: 8,
-  },
-  kindRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  legPickers: {
-    gap: 8,
-  },
-  picker: {
+    padding: 4,
     gap: 4,
   },
-  minutesRow: {
+  stepTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    minHeight: 44,
+  },
+  graphHint: {
+    marginTop: 8,
+  },
+  input: { paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, minHeight: 48 },
+  addPlace: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
+    marginTop: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    minHeight: 48,
   },
-  minutesHint: {
-    flex: 1,
-  },
-  routesHint: {
-    marginTop: 6,
-    marginBottom: 12,
-  },
-  routeList: {
-    gap: 8,
-  },
-  routeItem: {
+  nodePanel: { marginTop: 12, padding: 12, gap: 10 },
+  nodePanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
   },
-  issues: {
-    marginTop: 12,
-    gap: 6,
-  },
-  issueRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-  },
-  issueText: {
-    flex: 1,
-  },
-  iconButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dirtyBanner: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  roleChip: { paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, minHeight: 36 },
+  segmentList: { gap: 8 },
+  segmentRow: { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 10 },
+  segmentText: { flex: 1 },
+  removeButton: { padding: 6 },
+  issueRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  issueText: { flex: 1 },
 });

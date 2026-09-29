@@ -50,6 +50,42 @@ export default function HistoryScreen() {
    */
   const signatureModes = useCallback((trip: Trip): TransportMode[] => trip.legModes ?? [], []);
 
+  /** Commute name per template id, so every card is identifiable. */
+  const templateNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const template of templates.data ?? []) out.set(template.id, template.name);
+    return out;
+  }, [templates.data]);
+
+  /**
+   * Typical duration per route signature, from the trips already loaded.
+   *
+   * Computed here rather than queried per row: a median needs the whole set
+   * anyway, and one pass over the list beats a query per card. Only used when a
+   * route has been taken more than once, since a "typical" derived from a
+   * single trip is just that trip.
+   */
+  const typicalBySignature = useMemo(() => {
+    const grouped = new Map<string, number[]>();
+    for (const trip of trips) {
+      if (trip.routeSignature === null) continue;
+      if (trip.actualDurationMin === null || trip.actualDurationMin <= 0) continue;
+      const list = grouped.get(trip.routeSignature) ?? [];
+      list.push(trip.actualDurationMin);
+      grouped.set(trip.routeSignature, list);
+    }
+
+    const out = new Map<string, { p50: number; count: number }>();
+    for (const [signature, durations] of grouped) {
+      if (durations.length < 2) continue;
+      const sorted = [...durations].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      const p50 = sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+      out.set(signature, { p50: round(p50, 1), count: durations.length });
+    }
+    return out;
+  }, [trips]);
+
   const aggregate = useMemo(() => {
     if (trips.length === 0) return null;
     const durations = trips.map((trip) => trip.actualDurationMin ?? 0).filter((value) => value > 0);
@@ -66,17 +102,25 @@ export default function HistoryScreen() {
   }, [trips]);
 
   const renderItem = useCallback(
-    ({ item }: { item: Trip }) => (
-      <TripCard
-        trip={item}
-        weather={null}
-        traffic={null}
-        modes={signatureModes(item)}
-        onPress={() => router.push(`/(tabs)/(history)/trip/${item.id}`)}
-        testID={`trip-${item.id}`}
-      />
-    ),
-    [router, signatureModes],
+    ({ item }: { item: Trip }) => {
+      const typical =
+        item.routeSignature === null ? undefined : typicalBySignature.get(item.routeSignature);
+
+      return (
+        <TripCard
+          trip={item}
+          weather={null}
+          traffic={null}
+          modes={signatureModes(item)}
+          onPress={() => router.push(`/(tabs)/(history)/trip/${item.id}`)}
+          testID={`trip-${item.id}`}
+          templateName={templateNames.get(item.templateId)}
+          comparedToTypicalMinutes={typical?.p50 ?? null}
+          routeObservations={typical?.count ?? 0}
+        />
+      );
+    },
+    [router, signatureModes, templateNames, typicalBySignature],
   );
 
   return (
