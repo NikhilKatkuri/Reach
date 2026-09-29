@@ -57,12 +57,33 @@ The first stop in `sortOrder` is the origin; the last is the destination.
 | `id` | TEXT PK | |
 | `templateId` | TEXT FK → `templates` | `ON DELETE CASCADE` |
 | `name` | TEXT | `Bus Stop A` |
-| `kind` | TEXT | `home` · `stop` · `station` · `office` |
+| `kind` | TEXT | `home` · `stop` · `station` · `office` — *what kind of place* |
+| `nodeRole` | TEXT? | `origin` · `destination` · `junction` · `stop` — *its part in the topology* |
 | `latitude` / `longitude` | REAL? | optional |
-| `sortOrder` | INTEGER | position in the journey |
+| `sortOrder` | INTEGER | **UI ordering only.** Never used to infer origin or destination |
 | `createdAt` / `updatedAt` | INTEGER | |
 
 Index: `(templateId, sortOrder)`.
+
+**`kind` versus `nodeRole`**
+
+These answer different questions and are deliberately not collapsed into one
+column. `kind` is about identity — is this a house, a station, a workplace.
+`nodeRole` is about position in this journey's topology — does the route start
+here, fork here, or end here.
+
+Ameerpet is the motivating case: it is a `station` by kind and a `junction` by
+role, and it needs to be able to be both. Treating "junction" as a transport
+mode, or as a kind, makes a branching route inexpressible, which was exactly
+what stopped the first version of the editor from representing a fork.
+
+`nodeRole` is nullable in the database only so the column can be added to an
+existing table. `decodeStop` fills it via `resolveNodeRole`, which falls back
+to `kind` (`home` → origin, `office` → destination, otherwise `stop`), so by
+the time a stop reaches the engine the role is always present. Graphs that
+predate roles and have no endpoint marked at all fall back to first-in-order /
+last-in-order, which is the convention they were written with — see
+[Route signatures](#route-signatures).
 
 ### `segments` — the graph edges
 
@@ -228,6 +249,26 @@ The downside is that editing a template changes segment ids and therefore
 orphans its history. For v1 that is the right trade: a materially edited route
 *is* a different commute, and silently blending the two would be worse.
 
+### Endpoint resolution
+
+Enumeration needs to know where a route starts and ends. It resolves them in
+`buildGraph`, in this order:
+
+1. The node whose `nodeRole` is `origin` / `destination`. An explicit role
+   always wins, and there must be at most one of each — `validateGraph` treats a
+   duplicate as an error rather than silently picking one.
+2. If **no** node carries either endpoint role, the graph predates roles, and
+   the endpoints are taken as first-in-order and last-in-order.
+3. If *some* node carries an endpoint role but not the other, that is a
+   half-finished edit, and the gap is reported as an error. Guessing would hide
+   the problem.
+
+`buildGraph` exposes the result as `origin` / `destination` (the explicit
+roles, possibly `null`) alongside `effectiveOrigin` / `effectiveDestination`
+(what the engine will actually use). Callers that mean "how does this commute
+start" want the effective pair; the validator wants the explicit one, so it can
+report the absence of a role rather than work around it.
+
 ---
 
 ## Migrations
@@ -250,6 +291,21 @@ Rules for adding one:
 | --- | --- | --- |
 | 1 | `initial_schema` | The whole schema: templates, stops, segments, trips, events, weather, traffic, route edges, settings. |
 | 2 | `purge_demo_data` | Deletes every row the removed demo seeder had written, and repairs `trips.legModes` on databases created before that column existed. |
+| 3 | `explicit_node_roles` | Adds `stops.nodeRole` and backfills it: first stop in order becomes the origin, last becomes the destination, everything between is a `stop`. |
+
+Version 3's backfill is deliberately **purely positional**. An earlier draft
+also inferred a role from `kind` (a `home` becomes an origin), which looked
+helpful and was wrong: a template whose *middle* stop happened to be a `home`
+would end up with two origins, which `validateGraph` rejects. The user would
+have opened a working commute after upgrading and been told it was invalid.
+Position was the convention the old editor actually used, so position is all
+the migration trusts.
+
+The backfill is scoped per template, not globally, and is guarded by
+`WHERE nodeRole IS NULL`. Both matter: a global sort would pair one template's
+Home with another template's Office, and the null guard means a role the user
+has since set by hand is never clobbered. No row is deleted or re-parented, so
+trips, route signatures and learned statistics stay attached to the same graph.
 
 Version 2 deletes children explicitly instead of leaning on `ON DELETE CASCADE`,
 because an early build could open the database before

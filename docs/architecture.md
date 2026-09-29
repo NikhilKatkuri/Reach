@@ -83,6 +83,36 @@ Two things consume those tokens:
 
 ---
 
+## The commute builder
+
+Two steps, because naming your places and timing your legs are separate
+thoughts:
+
+1. **Places.** Add every place the journey passes through, in order. Roles are
+   inferred from position (first is the origin, second the destination) and can
+   be overridden.
+2. **Route.** One editable row per hop between consecutive places, carrying
+   mode, journey time and waiting time. All hops on one screen.
+
+The builder used to interleave these: add a stop, then add a leg from it, then
+add another stop. Every time the user typed a name they immediately had to
+think about transport and minutes, and there was no way to see the whole journey
+at once. Splitting them also gives the graph diagram a home where it is not
+competing with nine form fields.
+
+`buildChainHops` derives the chain in `src/engine/chain.ts`, outside the
+component, because deciding which of several connections between two places is
+the primary one is easy to get subtly wrong and hard to notice. The first
+declared connection wins, deliberately — choosing by duration would silently
+rewrite the route the user described.
+
+**Structural patterns.** The Places step offers patterns: one change, walk then
+transit, several changes, transit then a choice. They are *shapes* only. No
+pattern names a real bus, line or place, because Reach has no timetable and no
+knowledge of the user's city, and a preset reading "Bus 219 from Ameerpet"
+would be a confident invention sitting inside an app whose entire promise is
+that its numbers are measured rather than guessed.
+
 ## The database
 
 `src/db/database.ts` opens the database once, sets WAL and foreign keys, and
@@ -161,6 +191,9 @@ user:
 | `graph.test.ts` | adjacency, enumeration, branch detection, validation, cycles |
 | `penalties.test.ts` | weather, traffic and crowd models |
 | `prediction.test.ts` | route selection, determinism, conditions, edge cases |
+| `topology.test.ts` | linear/junction/alternative graphs, cycles, dead ends, reachability, node roles, transfer counting, layout determinism, presets, data-depth bands |
+| `chain.test.ts` | chain derivation and every editor-store transition, without a renderer |
+| `uuid.test.ts` | the id generator, including the inert-native-module case |
 | `persistence.test.ts` | real SQL against `node:sqlite`: schema, FK ordering, cascade safety |
 | `notifications.test.ts` | the notification service degrading when the native module throws |
 | `fixtures.ts` | a shared commute graph with three alternative routes |
@@ -170,7 +203,7 @@ test: it replays the app's real SQL through `node:sqlite`, because the two
 worst bugs in this codebase were both invisible to TypeScript, to ESLint and to
 a bundle.
 
-Five real bugs were found and fixed while building this; all five are now
+Seven real bugs were found and fixed while building this; all seven are now
 regression-locked:
 
 1. **Non-determinism** — the synthetic distribution sampler defaulted to
@@ -190,3 +223,16 @@ regression-locked:
 5. **Foreign keys violated on first launch** — `insertTripBundle` wrote the
    weather and traffic snapshots before the `trips` row they reference, so
    seeding crashed the app on startup.
+6. **`uuid()` could return `undefined`** — `expo-crypto`'s `randomUUID()` does
+   not throw when the native module is present but inert, it returns
+   `undefined`. A `try`/`catch` sailed straight past that, so *every generated
+   id in the app became the string `"undefined"`* and the database would have
+   collapsed into one row per table without any error. The fallback now keys off
+   the returned value, not off an exception. Found by writing a preset test that
+   failed for no visible reason.
+7. **Transfer counts collapsed to a boolean** — `RoutePath` exposed only
+   `hasTransfer`, and two call sites rendered `hasTransfer ? 1 : 0`. A route
+   with three changes of vehicle was shown as "1 transfer", which both
+   understated the transfer risk the engine models and hid it from the user.
+   `countTransfers` also mis-counted the *first* boarding as a transfer whenever
+   two walking legs preceded it.

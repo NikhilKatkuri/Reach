@@ -5,9 +5,9 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@expo/cli@57.0.27'
   - '@expo/router-server@57.0.6'
-  - '@expo/ui@57.0.9'
-  - expo-constants@57.0.19
+  - '@expo/ui@57.0.9 || 57.0.21'
+  - expo-constants@57.0.19 || 57.0.20
   - expo-linking@57.0.11
-  - expo-modules-core@57.0.11
-  - expo-router@57.0.23
-  - expo@57.0.25
+  - expo-modules-core@57.0.11 || 57.0.20
+  - expo-router@57.0.23 || 57.0.24
+  - expo@57.0.25 || 57.0.26

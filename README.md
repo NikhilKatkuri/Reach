@@ -25,7 +25,7 @@ difference explicitly and tells you when to leave.
 | Departure notifications | Complete (needs a dev build) |
 | Export / import backup | Complete |
 | Optional Gemini explanation | Complete, off by default |
-| Unit tests | 177 passing |
+| Unit tests | 294 passing |
 | Typecheck / lint / bundle | Clean (Android + iOS) |
 
 ```bash
