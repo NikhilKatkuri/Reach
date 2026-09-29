@@ -1,0 +1,39 @@
+# Root ignore file.
+#
+# Everything project-specific is covered by mobile/.gitignore, but that file
+# only applies within mobile/. A file created at the repo root would be
+# unignored, so the highest-risk cases are repeated here: a stray .env and a
+# stray node_modules are exactly the mistakes that should never reach a public
+# remote.
+
+# Dependencies
+node_modules/
+
+# Local environment and secrets.
+# .env.example is committed on purpose — it documents the required keys
+# without carrying any of their values.
+.env
+.env.*
+!.env.example
+
+# Build output and caches
+dist/
+build/
+coverage/
+.expo/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Test and tooling caches
+.cache/
+.eslintcache
+
+# Editor and OS cruft
+.DS_Store
+.idea/
+*.swp
