@@ -23,7 +23,7 @@
  * `"types": ["jest"]` and does not list it.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { MIGRATIONS, type MigrationTarget } from '@/src/db/migrations';
+import { MIGRATIONS, type MigrationBindValue, type MigrationTarget } from '@/src/db/migrations';
 
 /** Adapts `node:sqlite` to the interface migrations are written against. */
 function migrationTarget(db: DatabaseSync): MigrationTarget {
@@ -31,7 +31,11 @@ function migrationTarget(db: DatabaseSync): MigrationTarget {
     execAsync: async (sql) => {
       db.exec(sql);
     },
-    getAllAsync: async <T>(sql: string) => db.prepare(sql).all() as T[],
+    getAllAsync: async <T>(sql: string, ...params: MigrationBindValue[]) =>
+      db.prepare(sql).all(...(params as never[])) as T[],
+    runAsync: async (sql: string, ...params: MigrationBindValue[]) => {
+      db.prepare(sql).run(...(params as never[]));
+    },
   };
 }
 
@@ -62,6 +66,21 @@ async function createMigratedDatabase(): Promise<DatabaseSync> {
   const db = createDatabase();
   await migrate(db);
   return db;
+}
+
+/**
+ * Inserts a minimal template row.
+ *
+ * `stops` and `segments` both carry a foreign key to `templates`, so a fixture
+ * that skips the parent fails at the INSERT with a constraint error rather than
+ * at the assertion it was written for.
+ */
+function insertTemplate(db: DatabaseSync, id: string, name = 'Commute'): void {
+  db.exec(
+    `INSERT INTO templates (id, name, originName, destinationName, colorSeed, isArchived,
+                            isDefault, sortOrder, createdAt, updatedAt)
+     VALUES ('${id}', '${name}', 'From', 'To', '#00639B', 0, 0, 0, 1, 1)`,
+  );
 }
 
 /** Counts rows in a table. */
@@ -627,6 +646,157 @@ describe('demo data purge (migration 2)', () => {
     await expect(migrate(db)).resolves.toBeUndefined();
 
     expect(db.prepare('PRAGMA table_info(trips)').all()).toEqual(before);
+    db.close();
+  });
+
+  it('backfills nodeRole on a pre-role database, per template', async () => {
+    // A v1 database: the stops table has no nodeRole column, and origin and
+    // destination were encoded purely as sort order.
+    const db = createDatabase();
+    for (const statement of MIGRATIONS[0].up) db.exec(statement);
+    const now = 1_700_000_000_000;
+    insertTemplate(db, 'A');
+    insertTemplate(db, 'B');
+
+    // Two templates whose stops interleave, so a global sort would cross them.
+    const insert = (id: string, templateId: string, name: string, kind: string, order: number) =>
+      db.exec(
+        `INSERT INTO stops (id, templateId, name, kind, latitude, longitude, sortOrder, createdAt, updatedAt)
+         VALUES ('${id}', '${templateId}', '${name}', '${kind}', NULL, NULL, ${order}, ${now}, ${now})`,
+      );
+
+    insert('a-home', 'A', 'Home', 'home', 0);
+    insert('a-stop', 'A', 'Bus Stop A', 'stop', 1);
+    insert('a-office', 'A', 'Office', 'office', 2);
+
+    insert('b-school', 'B', 'School', 'stop', 0);
+    insert('b-home', 'B', 'Home', 'home', 1);
+    insert('b-work', 'B', 'Work', 'stop', 2);
+
+    await migrate(db);
+
+    const roleOf = (id: string) =>
+      (db.prepare(`SELECT nodeRole FROM stops WHERE id = ?`).get(id) as { nodeRole: string })
+        .nodeRole;
+
+    // Template A: first becomes origin, last becomes destination.
+    expect(roleOf('a-home')).toBe('origin');
+    expect(roleOf('a-stop')).toBe('stop');
+    expect(roleOf('a-office')).toBe('destination');
+
+    // Template B is independent, even though its rows sit between A's.
+    // A global sort would have paired A's Home with B's Work.
+    expect(roleOf('b-school')).toBe('origin');
+    expect(roleOf('b-home')).toBe('stop');
+    expect(roleOf('b-work')).toBe('destination');
+
+    // The invariant the migration must guarantee: a template with two or more
+    // stops ends up with exactly one origin and one destination. Two origins
+    // would be rejected by validateGraph and block the user from saving.
+    for (const templateId of ['A', 'B']) {
+      const roles = (
+        db.prepare(`SELECT nodeRole FROM stops WHERE templateId = ?`).all(templateId) as {
+          nodeRole: string;
+        }[]
+      ).map((row) => row.nodeRole);
+      expect({ templateId, origins: roles.filter((r) => r === 'origin').length }).toEqual({
+        templateId,
+        origins: 1,
+      });
+      expect(roles.filter((r) => r === 'destination')).toHaveLength(1);
+    }
+    db.close();
+  });
+
+  it('gives a single-stop template an origin and no destination', async () => {
+    const db = createDatabase();
+    for (const statement of MIGRATIONS[0].up) db.exec(statement);
+    insertTemplate(db, 'A');
+    db.exec(
+      `INSERT INTO stops (id, templateId, name, kind, latitude, longitude, sortOrder, createdAt, updatedAt)
+       VALUES ('only', 'A', 'Somewhere', 'stop', NULL, NULL, 0, 1, 1)`,
+    );
+
+    await migrate(db);
+
+    const row = db.prepare(`SELECT nodeRole FROM stops WHERE id = 'only'`).get() as {
+      nodeRole: string;
+    };
+    // Origin and destination must be different nodes, so one stop cannot be
+    // both.
+    expect(row.nodeRole).toBe('origin');
+    db.close();
+  });
+
+  it('preserves a role the user already chose when migrations re-run', async () => {
+    const db = createDatabase();
+    for (const statement of MIGRATIONS[0].up) db.exec(statement);
+    const now = 1_700_000_000_000;
+    insertTemplate(db, 'A');
+    db.exec(
+      `INSERT INTO stops (id, templateId, name, kind, latitude, longitude, sortOrder, createdAt, updatedAt)
+       VALUES ('home', 'A', 'Home', 'home', NULL, NULL, 0, ${now}, ${now}),
+              ('mid', 'A', 'Ameerpet', 'station', NULL, NULL, 1, ${now}, ${now}),
+              ('office', 'A', 'Office', 'office', NULL, NULL, 2, ${now}, ${now})`,
+    );
+
+    await migrate(db);
+    // The user marks the middle stop as a junction.
+    db.exec(`UPDATE stops SET nodeRole = 'junction' WHERE id = 'mid'`);
+
+    // A second run must not undo that.
+    await migrate(db);
+
+    const row = db.prepare(`SELECT nodeRole FROM stops WHERE id = 'mid'`).get() as {
+      nodeRole: string;
+    };
+    expect(row.nodeRole).toBe('junction');
+    db.close();
+  });
+
+  it('leaves trips, route signatures and history untouched', async () => {
+    const db = createDatabase();
+    for (const statement of MIGRATIONS[0].up) db.exec(statement);
+    const now = 1_700_000_000_000;
+    insertTemplate(db, 'A');
+    db.exec(
+      `INSERT INTO stops (id, templateId, name, kind, latitude, longitude, sortOrder, createdAt, updatedAt)
+       VALUES ('home', 'A', 'Home', 'home', NULL, NULL, 0, ${now}, ${now}),
+              ('office', 'A', 'Office', 'office', NULL, NULL, 1, ${now}, ${now})`,
+    );
+    db.exec(
+      `INSERT INTO segments (id, templateId, fromStopId, toStopId, mode, serviceLabel,
+                             expectedDurationMin, bufferMinutes, sortOrder, createdAt, updatedAt)
+       VALUES ('s1', 'A', 'home', 'office', 'walk', NULL, 20, 0, 0, ${now}, ${now})`,
+    );
+    db.exec(
+      `INSERT INTO trips (id, templateId, routeSignature, status, startedAt, createdAt, updatedAt)
+       VALUES ('t1', 'A', 's1', 'completed', ${now}, ${now}, ${now})`,
+    );
+    db.exec(
+      `INSERT INTO route_edges (id, templateId, routeSignature, segmentId, position,
+                                totalDurationMin, observations, createdAt, updatedAt)
+       VALUES ('e1', 'A', 's1', 's1', 0, 20, 5, ${now}, ${now})`,
+    );
+
+    await migrate(db);
+
+    // Historical statistics must still be attached to the same ids, or every
+    // prediction the user has ever seen would be silently invalidated.
+    expect(count(db, 'stops')).toBe(2);
+    expect(count(db, 'segments')).toBe(1);
+    expect(count(db, 'trips')).toBe(1);
+    expect(count(db, 'route_edges')).toBe(1);
+
+    const trip = db.prepare(`SELECT routeSignature FROM trips WHERE id = 't1'`).get() as {
+      routeSignature: string;
+    };
+    expect(trip.routeSignature).toBe('s1');
+
+    const edge = db.prepare(`SELECT observations FROM route_edges WHERE id = 'e1'`).get() as {
+      observations: number;
+    };
+    expect(edge.observations).toBe(5);
     db.close();
   });
 

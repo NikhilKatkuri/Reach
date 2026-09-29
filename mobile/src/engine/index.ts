@@ -104,6 +104,38 @@ export {
 } from './random';
 
 export {
+  type ChainHop,
+  type ChainInput,
+  buildChainHops,
+  chainProgress,
+  connectionBetween,
+} from './chain';
+
+export {
+  type HistoryDepth,
+  historyDepth,
+  historyDepthLabel,
+  historyDepthSentence,
+  isPersonalised,
+  tripsUntilNextBand,
+} from './historyDepth';
+
+export {
+  type GraphLayout,
+  type LaidOutConnection,
+  type LaidOutNode,
+  type LayoutInput,
+  layoutGraph,
+} from './layout';
+
+export {
+  describeRouteInline,
+  formatDurationLabel,
+  routeTransferLabel,
+  transferCountFor,
+} from './routePresentation';
+
+export {
   type ConditionInput,
   type HistoryInput,
   type PredictOptions,

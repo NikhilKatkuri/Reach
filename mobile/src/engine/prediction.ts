@@ -234,6 +234,16 @@ export function predict(graphData: TemplateGraph, options: PredictOptions): Pred
     travelTimeP90Min: round(route.p90, 1),
     onTimeProbability: round(route.onTimeProbability, 4),
     reliabilityScore: route.reliability,
+    // The engine's own count, from the transfer-risk model, which accounts for
+    // headway and crowd — not the plain boardable-mode heuristic in
+    // `countTransfers`. They agree on the count itself; the engine's is the one
+    // the recommendation was actually scored on.
+    transferCount: route.transferCount,
+    // Surfaced so the interface can distinguish "we measured this 12 times"
+    // from "this is modelled from the durations you entered". Both matter, and
+    // conflating them is how a cold-start estimate ends up looking like a
+    // hard-won personal statistic.
+    observedTrips: route.observedTrips,
     isRecommended: route.path.signature === best.path.signature,
   }));
 

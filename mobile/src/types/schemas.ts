@@ -15,9 +15,33 @@ export const TRANSPORT_MODES: readonly TransportMode[] = [
   'cab',
 ];
 
-/** Kinds of node in a commute graph. */
+/**
+ * Semantic *kind* of a place: what sort of place this is.
+ *
+ * This is about identity, not position in the journey, so it stays separate
+ * from {@link nodeRoleSchema}. A junction is usually a station, but a station
+ * can equally be the place you start or finish.
+ */
 export const stopKindSchema = z.enum(['home', 'stop', 'station', 'office']);
 export type StopKind = z.infer<typeof stopKindSchema>;
+
+/**
+ * A node's role *in this commute's topology*.
+ *
+ * This is what the engine needs, and it is deliberately not derivable from
+ * `kind`: a bus station is a `station` by kind and a `junction` by role, and
+ * conflating the two is what made the old editor unable to express a branch.
+ *
+ * - `origin` — where the commute starts
+ * - `destination` — where it ends
+ * - `junction` — a place routes split or rejoin
+ * - `stop` — an ordinary waypoint
+ */
+export const nodeRoleSchema = z.enum(['origin', 'destination', 'junction', 'stop']);
+export type NodeRole = z.infer<typeof nodeRoleSchema>;
+
+/** Every role a node can have, for pickers. */
+export const NODE_ROLES: readonly NodeRole[] = ['origin', 'destination', 'junction', 'stop'];
 
 /** Weather conditions stored on a snapshot. */
 export const weatherConditionSchema = z.enum([
@@ -70,19 +94,47 @@ export type TripDirection = z.infer<typeof tripDirectionSchema>;
 const idSchema = z.string().min(1);
 const timestampSchema = z.number().int().nonnegative();
 
-/** A node in a commute template's graph. */
+/**
+ * A node in a commute template's graph.
+ *
+ * `nodeRole` is optional so that a graph assembled from older persisted data —
+ * or from a test fixture written before roles existed — still parses. It is
+ * never optional in the database: migration 2 backfills it and the decoder
+ * fills in a sensible default, so by the time a `Stop` reaches the engine the
+ * role is always present. See {@link resolveNodeRole}.
+ */
 export const stopSchema = z.object({
   id: idSchema,
   templateId: idSchema,
   name: z.string().min(1).max(120),
   kind: stopKindSchema,
+  /**
+   * Explicit role. Absent only for graphs that predate roles; `buildGraph`
+   * treats a missing role as `stop` and the codec defaults by `kind`.
+   */
+  nodeRole: nodeRoleSchema.optional(),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
+  /** UI ordering only. Never used to infer origin or destination. */
   sortOrder: z.number().int().nonnegative(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 });
 export type Stop = z.infer<typeof stopSchema>;
+
+/**
+ * The node's effective role, falling back for graphs without one.
+ *
+ * `kind` carries a hint that is good enough for a node with no explicit role:
+ * `home` implies an origin and `office` a destination. Anything else becomes a
+ * `stop`, which is the safe default because it changes no topology.
+ */
+export function resolveNodeRole(stop: Pick<Stop, 'kind' | 'nodeRole'>): NodeRole {
+  if (stop.nodeRole !== undefined) return stop.nodeRole;
+  if (stop.kind === 'home') return 'origin';
+  if (stop.kind === 'office') return 'destination';
+  return 'stop';
+}
 
 /** A directed edge in a commute template's graph. */
 export const segmentSchema = z.object({
@@ -285,6 +337,22 @@ export const routeCandidateSchema = z.object({
   travelTimeP90Min: z.number().nonnegative(),
   onTimeProbability: z.number().min(0).max(1),
   reliabilityScore: z.number().min(0).max(100),
+  /**
+   * Real boarding transitions, from `summarizeTransferRisk`.
+   *
+   * Optional because a candidate can be persisted by an older build that did
+   * not record it; `routeTransferLabel` handles the absence.
+   */
+  transferCount: z.number().int().min(0).optional(),
+  /**
+   * Logged trips that actually used this exact route.
+   *
+   * Exposed because "12 previous trips on this route" is the sentence that
+   * tells a user whether a number is measured or modelled, and the engine
+   * already computes it. Optional for the same backward-compatibility reason
+   * as `transferCount`.
+   */
+  observedTrips: z.number().int().min(0).optional(),
   isRecommended: z.boolean(),
 });
 export type RouteCandidate = z.infer<typeof routeCandidateSchema>;

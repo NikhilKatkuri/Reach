@@ -11,6 +11,7 @@ import {
   TRANSPORT_MODES,
   type CommuteTemplate,
   type CrowdLevel,
+  resolveNodeRole,
   type RouteEdgeStats,
   type Segment,
   type Setting,
@@ -97,6 +98,13 @@ export function decodeStop(row: Row): Stop {
     templateId: str(row, 'templateId'),
     name: str(row, 'name'),
     kind: str(row, 'kind') as Stop['kind'],
+    // Null only for a row written before node roles existed. Inferring from
+    // `kind` here means the rest of the app can treat the role as always
+    // present, rather than branching on undefined at every use site.
+    nodeRole: resolveNodeRole({
+      kind: str(row, 'kind') as Stop['kind'],
+      nodeRole: strOrNull(row, 'nodeRole') as Stop['nodeRole'],
+    }),
     latitude: numOrNull(row, 'latitude'),
     longitude: numOrNull(row, 'longitude'),
     sortOrder: num(row, 'sortOrder'),
@@ -274,6 +282,9 @@ export function encodeStop(stop: Stop): Record<string, BindValue> {
     templateId: stop.templateId,
     name: stop.name,
     kind: stop.kind,
+    // Always written, even when the caller left it undefined, so a stop edited
+    // through the new editor persists the role the user chose.
+    nodeRole: resolveNodeRole(stop),
     latitude: stop.latitude,
     longitude: stop.longitude,
     sortOrder: stop.sortOrder,

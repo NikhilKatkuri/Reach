@@ -2,12 +2,22 @@
  * The database surface a migration needs.
  *
  * Declared structurally rather than as `expo-sqlite`'s `SQLiteDatabase` so the
+ */
+
+/** A value SQLite can bind. Mirrors `expo-sqlite`'s own bind types. */
+export type MigrationBindValue = string | number | null | boolean;
+
+/**
+ * The database surface a migration needs.
+ *
+ * Declared structurally rather than as `expo-sqlite`'s `SQLiteDatabase` so the
  * integration test can run the exact same migration objects against
  * `node:sqlite`. Both satisfy this interface.
  */
 export interface MigrationTarget {
   execAsync(sql: string): Promise<void>;
-  getAllAsync<T>(sql: string): Promise<T[]>;
+  getAllAsync<T>(sql: string, ...params: MigrationBindValue[]): Promise<T[]>;
+  runAsync(sql: string, ...params: MigrationBindValue[]): Promise<unknown>;
 }
 
 /**
@@ -287,6 +297,11 @@ export const MIGRATIONS: readonly Migration[] = [
       `DELETE FROM settings WHERE key LIKE 'seed.%';`,
     ],
     customize: async (db) => {
+      const columns = async (table: string) =>
+        (await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map(
+          (column) => column.name,
+        );
+
       /*
        * `trips.legModes` was added to migration 1 while the app was still in
        * development, so there are two kinds of v1 database in the wild: ones
@@ -297,9 +312,89 @@ export const MIGRATIONS: readonly Migration[] = [
        *
        * SQLite has no `ADD COLUMN IF NOT EXISTS`, so the check is explicit.
        */
-      const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(trips)');
-      if (columns.some((column) => column.name === 'legModes')) return;
-      await db.execAsync('ALTER TABLE trips ADD COLUMN legModes TEXT;');
+      if (!(await columns('trips')).includes('legModes')) {
+        await db.execAsync('ALTER TABLE trips ADD COLUMN legModes TEXT;');
+      }
+
+      /*
+       * `stops.nodeRole` is added in v3. It is created here as well, purely so a
+       * v1 database is never left with a v3 that half-applies. v3 backfills
+       * idempotently, so doing the ALTER early is safe: v3 still fills the
+       * values this step does not.
+       */
+      if (!(await columns('stops')).includes('nodeRole')) {
+        await db.execAsync('ALTER TABLE stops ADD COLUMN nodeRole TEXT;');
+      }
+    },
+  },
+
+  {
+    version: 3,
+    name: 'explicit_node_roles',
+    up: [],
+    customize: async (db) => {
+      const columns = (await db.getAllAsync<{ name: string }>('PRAGMA table_info(stops)')).map(
+        (column) => column.name,
+      );
+      if (!columns.includes('nodeRole')) {
+        await db.execAsync('ALTER TABLE stops ADD COLUMN nodeRole TEXT;');
+      }
+
+      /*
+       * Backfill, without destroying anything.
+       *
+       * Old templates encoded origin and destination purely as sort order, so
+       * the only honest way to recover intent is the ordering the user actually
+       * set: the lowest `sortOrder` becomes the origin, the highest becomes the
+       * destination, and everything between keeps the neutral `stop` role.
+       *
+       * Four details matter for correctness:
+       *
+       * 1. This runs per template, not globally. Sorting every stop in the
+       *    table would compare one template's Home against another template's
+       *    Office and pick the wrong endpoints.
+       * 2. Purely positional — no inference from `kind`. A kind-based hint
+       *    looks helpful but breaks the guarantee: a template whose middle stop
+       *    happened to be a `home` would end up with two origins, which
+       *    `validateGraph` rejects as an error. Upgrading would then block the
+       *    user from saving a commute they built years ago. Position was the
+       *    convention, so position is all we use.
+       * 3. `WHERE nodeRole IS NULL` makes this idempotent and, crucially,
+       *    avoids overwriting roles the user has since edited. A stop that
+       *    became a junction stays a junction.
+       * 4. A one-stop template gets `origin` only. Giving it a destination too
+       *    would make origin and destination the same node, which
+       *    `validateGraph` treats as an error.
+       *
+       * Note this updates rows in place. No stop is deleted, renamed or
+       * re-parented, so every existing trip, route signature and statistic
+       * stays valid and attached to the same graph.
+       */
+      const templates = await db.getAllAsync<{ id: string }>(
+        'SELECT DISTINCT templateId AS id FROM stops',
+      );
+
+      for (const { id: templateId } of templates) {
+        const stops = await db.getAllAsync<{ id: string; kind: string; sortOrder: number }>(
+          'SELECT id, kind, sortOrder FROM stops WHERE templateId = ? ORDER BY sortOrder ASC, createdAt ASC',
+          templateId,
+        );
+        if (stops.length === 0) continue;
+
+        const first = stops[0];
+        const last = stops.length > 1 ? stops[stops.length - 1] : undefined;
+
+        for (const stop of stops) {
+          const role: string =
+            stop.id === first?.id ? 'origin' : stop.id === last?.id ? 'destination' : 'stop';
+
+          await db.runAsync(
+            'UPDATE stops SET nodeRole = ? WHERE id = ? AND nodeRole IS NULL',
+            role,
+            stop.id,
+          );
+        }
+      }
     },
   },
 ];

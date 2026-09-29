@@ -213,6 +213,79 @@ describe('branch detection', () => {
   });
 });
 
+describe('transfer counts on enumerated routes', () => {
+  it('reports the real count, not just whether there is one', () => {
+    /*
+     * Walk -> Bus -> Metro -> Walk -> Bus
+     *
+     * Boardings: bus (first, not a transfer), metro (1), bus (2). So this
+     * route has two transfers. Reporting "1 transfer" because the boolean was
+     * true is the bug this test exists to prevent.
+     */
+    const graph = buildGraph(
+      makeGraph(
+        [makeStop('a', 0), makeStop('b', 1), makeStop('c', 2), makeStop('d', 3), makeStop('e', 4)],
+        [
+          makeSegment('s0', 'a', 'b', 0, { mode: 'walk' }),
+          makeSegment('s1', 'b', 'c', 1, { mode: 'bus' }),
+          makeSegment('s2', 'c', 'd', 2, { mode: 'metro' }),
+          makeSegment('s3', 'd', 'e', 3, { mode: 'walk' }),
+          makeSegment('s4', 'e', 'a', 4, { mode: 'bus' }),
+        ],
+      ),
+    );
+
+    // A -> b -> c -> d -> e -> a cycles, so enumerate the simple path
+    // a -> b -> c -> d -> e directly instead.
+    const routes = enumerateRoutes(graph, { originId: 'a', destinationId: 'e' });
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.transferCount).toBe(1);
+  });
+
+  it('counts each boarding transition on a multi-transfer route', () => {
+    // Home -> Bus -> Metro -> Walk -> Bus -> Office: two changes of vehicle.
+    const graph = buildGraph(
+      makeGraph(
+        [
+          makeStop('home', 0),
+          makeStop('s1', 1),
+          makeStop('s2', 2),
+          makeStop('s3', 3),
+          makeStop('s4', 4),
+          makeStop('office', 5),
+        ],
+        [
+          makeSegment('e0', 'home', 's1', 0, { mode: 'walk' }),
+          makeSegment('e1', 's1', 's2', 1, { mode: 'bus' }),
+          makeSegment('e2', 's2', 's3', 2, { mode: 'metro' }),
+          makeSegment('e3', 's3', 's4', 3, { mode: 'walk' }),
+          makeSegment('e4', 's4', 'office', 4, { mode: 'bus' }),
+        ],
+      ),
+    );
+
+    const [route] = enumerateRoutes(graph, { originId: 'home', destinationId: 'office' });
+    expect(route?.transferCount).toBe(2);
+    // The boolean stays consistent with the count.
+    expect(route?.hasTransfer).toBe(true);
+  });
+
+  it('reports zero for a single-vehicle route', () => {
+    const graph = buildGraph(
+      makeGraph(
+        [makeStop('a', 0), makeStop('b', 1), makeStop('c', 2)],
+        [
+          makeSegment('s0', 'a', 'b', 0, { mode: 'walk' }),
+          makeSegment('s1', 'b', 'c', 1, { mode: 'metro' }),
+        ],
+      ),
+    );
+    const [route] = enumerateRoutes(graph, { originId: 'a', destinationId: 'c' });
+    expect(route?.transferCount).toBe(0);
+    expect(route?.hasTransfer).toBe(false);
+  });
+});
+
 describe('countTransfers', () => {
   it('counts 0 for a single-mode trip', () => {
     const segments = COMMUTE_GRAPH.segments.filter(
@@ -250,13 +323,74 @@ describe('validateGraph', () => {
     expect(issues.some((issue) => issue.severity === 'error')).toBe(true);
   });
 
-  it('rejects a graph where the origin cannot reach the destination', () => {
+  it('rejects a self-loop as its own specific problem', () => {
     const broken = makeGraph(
       [makeStop('a', 0), makeStop('b', 1)],
       [makeSegment('s1', 'a', 'a', 0)],
     );
     const issues = validateGraph(buildGraph(broken));
-    expect(issues.some((issue) => issue.message.includes('No route connects'))).toBe(true);
+    // Asserted on the code, not the prose: the copy is free to change, the
+    // classification is the contract.
+    expect(issues.map((issue) => issue.code)).toContain('self-loop');
+    expect(issues.find((issue) => issue.code === 'self-loop')?.severity).toBe('error');
+  });
+
+  it('rejects a graph where the origin cannot reach the destination', () => {
+    /*
+     * The destination is whatever is last in order. So to make it genuinely
+     * unreachable, it must be the isolated node:
+     *
+     *   a -> c          c is a dead end, not the destination
+     *   b (isolated)    b is last, so b is the destination
+     */
+    const disconnected = makeGraph(
+      [makeStop('a', 0), makeStop('c', 1), makeStop('b', 2)],
+      [makeSegment('s1', 'a', 'c', 0)],
+    );
+    const issues = validateGraph(buildGraph(disconnected));
+    expect(issues.map((issue) => issue.code)).toContain('destination-unreachable');
+  });
+
+  it('names the place the route dies out at, not just the origin', () => {
+    /*
+     *   Home -> Ameerpet -> x
+     *   y (isolated, last in order, so the destination)
+     *
+     * The destination is unreachable. The useful thing to tell the user is
+     * that Ameerpet is the last node they could extend — not the isolated
+     * destination, and not the origin they started from.
+     */
+    const stranded = makeGraph(
+      [makeStop('Home', 0), makeStop('Ameerpet', 1), makeStop('x', 2), makeStop('y', 3)],
+      [makeSegment('s1', 'Home', 'Ameerpet', 0), makeSegment('s2', 'Ameerpet', 'x', 1)],
+    );
+    const issues = validateGraph(buildGraph(stranded));
+    const unreachable = issues.find((issue) => issue.code === 'destination-unreachable');
+
+    expect(unreachable?.message).toContain('Ameerpet');
+    // Not the origin: "you cannot get there from where you already are" is
+    // not actionable, whereas "connect one more leg from Ameerpet" is.
+    expect(unreachable?.message).not.toContain('Home');
+  });
+
+  it('rejects a connection with a zero or negative duration', () => {
+    const zeroDuration = makeGraph(
+      [makeStop('a', 0), makeStop('b', 1)],
+      [makeSegment('s1', 'a', 'b', 0, { expectedDurationMin: 0 })],
+    );
+    const issues = validateGraph(buildGraph(zeroDuration));
+    expect(issues.map((issue) => issue.code)).toContain('connection-no-duration');
+  });
+
+  it('rejects a connection that points at a missing node', () => {
+    const dangling = makeGraph(
+      [makeStop('a', 0), makeStop('b', 1)],
+      [makeSegment('s1', 'a', 'ghost', 0)],
+    );
+    const issues = validateGraph(buildGraph(dangling));
+    const missing = issues.find((issue) => issue.code === 'connection-missing-node');
+    expect(missing?.severity).toBe('error');
+    expect(missing?.stopIds).toContain('ghost');
   });
 
   it('warns about a dead end without blocking', () => {
@@ -269,20 +403,51 @@ describe('validateGraph', () => {
       ],
     );
     const issues = validateGraph(buildGraph(withDeadEnd));
-    const deadEnd = issues.find((issue) => issue.message.includes('dead end'));
+    const deadEnd = issues.find((issue) => issue.code === 'dead-end');
 
     expect(deadEnd?.severity).toBe('warning');
     // A dead end is advisory: the template still works.
     expect(issues.filter((issue) => issue.severity === 'error')).toEqual([]);
   });
 
-  it('warns when the origin itself branches', () => {
-    const branchingOrigin = makeGraph(
-      [makeStop('a', 0), makeStop('b', 1), makeStop('c', 2)],
-      [makeSegment('s1', 'a', 'b', 0), makeSegment('s2', 'a', 'c', 1)],
+  it('warns when a node is not part of any route', () => {
+    // The orphan sits in the middle: the last stop in order is the
+    // destination by convention, so an orphan in last position would be
+    // "an unreachable destination", a different problem.
+    const withOrphan = makeGraph(
+      [makeStop('a', 0), makeStop('lonely', 1), makeStop('b', 2)],
+      [makeSegment('s1', 'a', 'b', 0)],
     );
-    const issues = validateGraph(buildGraph(branchingOrigin));
-    expect(issues.some((issue) => issue.message.includes('several outgoing legs'))).toBe(true);
+    const issues = validateGraph(buildGraph(withOrphan));
+    expect(issues.map((issue) => issue.code)).toContain('unused-node');
+  });
+
+  it('warns when two alternatives from a junction are effectively identical', () => {
+    // Same mode, same duration: offering this as two options is misleading.
+    const duplicate = makeGraph(
+      [makeStop('home', 0), makeStop('j', 1), makeStop('office', 2)],
+      [
+        makeSegment('s1', 'home', 'j', 0),
+        makeSegment('s2', 'j', 'office', 1, { mode: 'metro', expectedDurationMin: 20 }),
+        makeSegment('s3', 'j', 'office', 2, { mode: 'metro', expectedDurationMin: 21 }),
+      ],
+    );
+    const issues = validateGraph(buildGraph(duplicate));
+    expect(issues.map((issue) => issue.code)).toContain('duplicate-alternative');
+  });
+
+  it('does not warn about genuinely different alternatives', () => {
+    // 20 min metro vs 45 min bus is a real choice, not a duplicate.
+    const realChoice = makeGraph(
+      [makeStop('home', 0), makeStop('j', 1), makeStop('office', 2)],
+      [
+        makeSegment('s1', 'home', 'j', 0),
+        makeSegment('s2', 'j', 'office', 1, { mode: 'metro', expectedDurationMin: 20 }),
+        makeSegment('s3', 'j', 'office', 2, { mode: 'bus', expectedDurationMin: 45 }),
+      ],
+    );
+    const issues = validateGraph(buildGraph(realChoice));
+    expect(issues.map((issue) => issue.code)).not.toContain('duplicate-alternative');
   });
 });
 
