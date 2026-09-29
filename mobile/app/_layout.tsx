@@ -23,10 +23,6 @@ export default function RootLayout() {
     'GoogleSans-Medium': require('../assets/fonts/GoogleSans-Medium.ttf'),
     'GoogleSans-SemiBold': require('../assets/fonts/GoogleSans-SemiBold.ttf'),
     'GoogleSans-Bold': require('../assets/fonts/GoogleSans-Bold.ttf'),
-    'GoogleSans-Italic': require('../assets/fonts/GoogleSans-Italic.ttf'),
-    'GoogleSans-MediumItalic': require('../assets/fonts/GoogleSans-MediumItalic.ttf'),
-    'GoogleSans-SemiBoldItalic': require('../assets/fonts/GoogleSans-SemiBoldItalic.ttf'),
-    'GoogleSans-BoldItalic': require('../assets/fonts/GoogleSans-BoldItalic.ttf'),
     'GoogleSansCode-Medium': require('../assets/fonts/GoogleSansCode-Medium.ttf'),
   });
 

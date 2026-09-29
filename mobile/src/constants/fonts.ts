@@ -1,13 +1,16 @@
-/** Font family names loaded in `app/_layout.tsx`. */
+/**
+ * Font family names loaded in `app/_layout.tsx`.
+ *
+ * No italic variants, deliberately. Nothing in the app sets `fontStyle`, and
+ * `familyForWeight` only ever returns one of the four below, so the italic
+ * files were 8.2 MB of binary that was registered, shipped inside the APK, and
+ * never rendered.
+ */
 export const FONTS = {
   regular: 'GoogleSans-Regular',
   medium: 'GoogleSans-Medium',
   semibold: 'GoogleSans-SemiBold',
   bold: 'GoogleSans-Bold',
-  italic: 'GoogleSans-Italic',
-  mediumItalic: 'GoogleSans-MediumItalic',
-  semiboldItalic: 'GoogleSans-SemiBoldItalic',
-  boldItalic: 'GoogleSans-BoldItalic',
   code: 'GoogleSansCode-Medium',
 } as const;
 
