@@ -13,7 +13,7 @@
  * cards in `src/features/templates`, persistence in `src/db`. It wires them
  * together and owns nothing else.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -27,7 +27,7 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/src/store/theme';
-import { Button, Card, Icon, RouteGraph } from '@/src/components/ui';
+import { Button, Card, Icon, ListSkeleton, RouteGraph, ScreenContainer } from '@/src/components/ui';
 import { modeIconName } from '@/src/components/ui/Icon';
 import { useTemplateGraph } from '@/src/hooks/useTrips';
 import { useTemplateEditor } from '@/src/store/templateEditor';
@@ -105,18 +105,30 @@ export default function TemplateEditorScreen() {
   /*
    * Load the template into the editor once it arrives.
    *
-   * React's "adjust state when an input changes" pattern rather than an
-   * effect: the store write happens during the render that notices the change,
-   * so the first painted frame already shows the loaded draft. An effect would
-   * paint an empty editor and then repaint.
+   * This was previously a render-phase write, on the reasoning that "adjust
+   * state during render" avoids an extra paint. That reasoning conflated two
+   * different things. Adjusting *this component's own* state during render is a
+   * real, documented React pattern. `load()` is not that — it is a Zustand
+   * setter, so it notifies every other component subscribed to the store while
+   * this one is still rendering. React throws for exactly this, and correctly:
+   * a render must not have side effects on the rest of the tree.
+   *
+   * So the store write goes in an effect, and a ref records which template has
+   * been loaded. The ref is doing the work a `useState` guard would, except it
+   * is not itself a render-phase mutation, and it does not trigger a second
+   * render pass. Keying on the template id rather than the query result means a
+   * background refetch does not clobber unsaved edits with a fresh copy.
    */
-  const loadedKey = isNew ? 'new' : (graphQuery.data?.template.id ?? null);
-  const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+  const loadedTemplateId = isNew ? 'new' : (graphQuery.data?.template.id ?? null);
+  const loadedRef = useRef<string | null>(null);
+  const graphData = graphQuery.data ?? null;
 
-  if (loadedDraftKey !== loadedKey && loadedKey !== null) {
-    setLoadedDraftKey(loadedKey);
-    load(isNew ? null : (graphQuery.data ?? null));
-  }
+  useEffect(() => {
+    if (loadedTemplateId === null) return;
+    if (loadedRef.current === loadedTemplateId) return;
+    loadedRef.current = loadedTemplateId;
+    load(isNew ? null : graphData);
+  }, [graphData, isNew, load, loadedTemplateId]);
 
   const analysis = useMemo(
     () =>
@@ -241,6 +253,20 @@ export default function TemplateEditorScreen() {
    * valid graph, so by the time the full editor appears there is already
    * something to edit rather than a blank page.
    */
+  // An existing template whose graph has not arrived yet must not flash the
+  // new-commute form: the draft is empty precisely because the data is still
+  // coming, and swapping to "create your commute" mid-load looks like the app
+  // forgot everything.
+  const isLoadingGraph = !isNew && graphQuery.isLoading;
+
+  if (isLoadingGraph) {
+    return (
+      <ScreenContainer title={draft.name || 'Commute'} applyTopInset={false}>
+        <ListSkeleton count={4} />
+      </ScreenContainer>
+    );
+  }
+
   if (draft.stops.length === 0) {
     return (
       <KeyboardAvoidingView
