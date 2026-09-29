@@ -67,7 +67,7 @@ export function ScreenContainer({
           <View style={styles.titleRow}>
             <Text
               accessibilityRole="header"
-              style={[type.displaySmall, styles.title, { color: colors.onBackground }]}
+              style={[type.headlineLarge, styles.title, { color: colors.onBackground }]}
             >
               {title}
             </Text>
@@ -82,7 +82,11 @@ export function ScreenContainer({
       </View>
     ) : null;
 
-  const body = <View style={[padded && styles.padded, contentStyle]}>{children}</View>;
+  const body = (
+    <View style={[padded && styles.padded, !scrollable && styles.flex, contentStyle]}>
+      {children}
+    </View>
+  );
 
   const containerStyle = [
     styles.container,
@@ -155,8 +159,8 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 16,
+    paddingTop: 20,
+    paddingBottom: 18,
     gap: 4,
   },
   title: {

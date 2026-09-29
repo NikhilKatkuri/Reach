@@ -77,7 +77,7 @@ export default function InsightsScreen() {
 
   if (templates.isLoading || tripsQuery.isLoading) {
     return (
-      <ScreenContainer title="Insights" applyTopInset={false} padded={false}>
+      <ScreenContainer title="Insights" applyTopInset={false} padded={false} scrollable={false}>
         <View style={styles.content}>
           <View style={styles.chipRow}>
             <Skeleton width={148} height={32} radius={8} />
@@ -107,7 +107,7 @@ export default function InsightsScreen() {
   // A template with zero trips: an empty dashboard of zeros reads as broken.
   if (trips.length === 0) {
     return (
-      <ScreenContainer title="Insights" applyTopInset={false} padded={false}>
+      <ScreenContainer title="Insights" applyTopInset={false} padded={false} scrollable={false}>
         <View style={styles.content}>
           <View style={styles.chipRow}>
             {(templates.data ?? []).map((template) => (
@@ -147,6 +147,7 @@ export default function InsightsScreen() {
       subtitle="From your own history"
       applyTopInset={false}
       padded={false}
+      scrollable={false}
     >
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.controls}>

@@ -409,12 +409,14 @@ const styles = StyleSheet.create({
   numberInput: {
     minWidth: 56,
     paddingVertical: 4,
+    textAlignVertical: 'center',
   },
   input: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1,
     minHeight: 44,
+    textAlignVertical: 'center',
   },
   newNodeRow: {
     flexDirection: 'row',

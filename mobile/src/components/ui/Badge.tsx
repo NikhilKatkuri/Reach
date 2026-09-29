@@ -41,7 +41,7 @@ export function Badge({
   accessibilityLabel,
   testID,
 }: BadgeProps) {
-  const { colors, shape } = useTheme();
+  const { colors, shape, type } = useTheme();
   const resolved = colorsFor(tone, colors);
 
   if (dot) {
@@ -73,7 +73,7 @@ export function Badge({
       ]}
       testID={testID}
     >
-      <Text numberOfLines={1} style={[styles.label, { color: resolved.label }]}>
+      <Text numberOfLines={1} style={[type.labelSmall, styles.label, { color: resolved.label }]}>
         {label}
       </Text>
     </View>
@@ -91,8 +91,6 @@ const styles = StyleSheet.create({
     height: 8,
   },
   label: {
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    fontFamily: 'GoogleSans-SemiBold',
   },
 });

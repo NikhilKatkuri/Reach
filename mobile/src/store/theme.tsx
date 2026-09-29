@@ -143,5 +143,8 @@ export function toTextStyle(entry: M3TextStyle): TextStyle {
     lineHeight: entry.lineHeight,
     fontWeight: entry.fontWeight,
     letterSpacing: entry.letterSpacing,
+    // Android otherwise adds font ascent/descent padding around Google Sans,
+    // which makes single-line TextInputs look vertically top-aligned.
+    includeFontPadding: false,
   };
 }

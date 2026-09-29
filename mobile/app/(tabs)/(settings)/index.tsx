@@ -219,7 +219,7 @@ export default function SettingsScreen() {
   );
 
   return (
-    <ScreenContainer title="Settings" applyTopInset={false} padded={false}>
+    <ScreenContainer title="Settings" applyTopInset={false} padded={false} scrollable={false}>
       <Stack.Screen options={{ title: 'Settings' }} />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -476,7 +476,7 @@ function ApiKeyField({
   readonly onChange: (value: string) => void;
   readonly onCommit: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, type } = useTheme();
 
   return (
     <TextInput
@@ -488,12 +488,14 @@ function ApiKeyField({
       autoCorrect={false}
       secureTextEntry
       style={{
+        ...type.bodyLarge,
         backgroundColor: colors.surfaceContainerHighest,
         borderRadius: 8,
         paddingHorizontal: 12,
         paddingVertical: 10,
+        minHeight: 48,
+        textAlignVertical: 'center',
         color: colors.onSurface,
-        fontSize: 14,
       }}
     />
   );

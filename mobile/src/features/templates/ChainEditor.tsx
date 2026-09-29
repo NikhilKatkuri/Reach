@@ -332,11 +332,13 @@ const styles = StyleSheet.create({
   numberInput: {
     minWidth: 48,
     paddingVertical: 4,
+    textAlignVertical: 'center',
   },
   serviceInput: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
     minHeight: 40,
+    textAlignVertical: 'center',
   },
 });

@@ -117,14 +117,13 @@ export const Button = forwardRef<View, ButtonProps>(function Button(
   },
   ref,
 ) {
-  const { colors, shape, minTouchTarget } = useTheme();
+  const { colors, shape, minTouchTarget, type } = useTheme();
   const isDisabled = disabled || loading;
   const resolved = resolveColors(variant, colors);
 
-  const height =
-    size === 'small' ? 40 : size === 'large' ? Math.max(64, minTouchTarget + 16) : minTouchTarget;
+  const height = size === 'small' ? 40 : size === 'large' ? 52 : minTouchTarget;
   const paddingHorizontal = size === 'small' ? 16 : size === 'large' ? 32 : 24;
-  const fontSize = size === 'small' ? 14 : size === 'large' ? 16 : 14;
+  const labelType = size === 'small' ? type.labelMedium : type.labelLarge;
 
   const borderWidth = variant === 'outlined' ? StyleSheet.hairlineWidth * 2 : 0;
   const radius = variant === 'text' ? shape.small : shape.full;
@@ -167,12 +166,11 @@ export const Button = forwardRef<View, ButtonProps>(function Button(
           <Text
             numberOfLines={1}
             style={[
+              labelType,
               styles.label,
               {
                 color: resolved.label,
-                fontSize,
                 fontWeight: '600',
-                letterSpacing: 0.1,
               },
               textStyle,
             ]}
@@ -214,5 +212,6 @@ const styles = StyleSheet.create({
   },
   label: {
     textAlign: 'center',
+    fontFamily: 'GoogleSans-SemiBold',
   },
 });

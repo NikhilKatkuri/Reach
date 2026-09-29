@@ -212,7 +212,6 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   header: {
-    paddingHorizontal: 20,
     paddingBottom: 12,
     gap: 8,
   },
@@ -222,7 +221,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tail: {
-    paddingHorizontal: 20,
     paddingTop: 12,
     textAlign: 'center',
   },

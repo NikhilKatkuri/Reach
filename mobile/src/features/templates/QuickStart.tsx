@@ -157,6 +157,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderWidth: 1,
     minHeight: 48,
+    textAlignVertical: 'center',
   },
   note: {
     paddingHorizontal: 4,

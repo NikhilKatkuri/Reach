@@ -68,7 +68,7 @@ export function Chip({
   accessibilityLabel,
   testID,
 }: ChipProps) {
-  const { colors, shape, minTouchTarget } = useTheme();
+  const { colors, shape, minTouchTarget, type } = useTheme();
   const resolved = resolveColors(variant, selected, accentColor ?? colors.primary, colors);
   const isInteractive = onPress !== undefined || onRemove !== undefined;
 
@@ -79,7 +79,11 @@ export function Chip({
       ) : null}
       <Text
         numberOfLines={1}
-        style={[styles.label, { color: resolved.label, opacity: disabled ? 0.5 : 1 }]}
+        style={[
+          type.labelLarge,
+          styles.label,
+          { color: resolved.label, opacity: disabled ? 0.5 : 1 },
+        ]}
       >
         {label}
       </Text>
@@ -118,6 +122,7 @@ export function Chip({
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onRemove ?? onPress}
+      hitSlop={8}
       android_ripple={{ color: `${resolved.label}1A` }}
       style={({ pressed }) => [containerStyle, pressed && { opacity: 0.85 }]}
       testID={testID}
@@ -139,8 +144,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '500',
-    letterSpacing: 0.1,
+    flexShrink: 1,
   },
 });

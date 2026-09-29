@@ -110,6 +110,7 @@ export function ScreenList<ItemT>({
           styles.content,
           { paddingBottom: insets.bottom + (footer !== undefined ? 108 : 32) },
         ]}
+        ItemSeparatorComponent={ListSeparator}
         ListHeaderComponent={
           <View>
             {hasHeader ? (
@@ -119,7 +120,7 @@ export function ScreenList<ItemT>({
                 ) : null}
                 <Text
                   accessibilityRole="header"
-                  style={[type.displaySmall, styles.title, { color: colors.onBackground }]}
+                  style={[type.headlineLarge, styles.title, { color: colors.onBackground }]}
                 >
                   {title}
                 </Text>
@@ -181,9 +182,9 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
+    paddingHorizontal: 20,
   },
   header: {
-    paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 16,
     gap: 4,
@@ -194,9 +195,16 @@ const styles = StyleSheet.create({
   tailSpace: {
     height: 8,
   },
+  separator: {
+    height: 12,
+  },
   footer: {
     paddingHorizontal: 20,
     paddingTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
 });
+
+function ListSeparator() {
+  return <View style={styles.separator} />;
+}

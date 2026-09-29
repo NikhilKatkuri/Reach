@@ -837,7 +837,13 @@ const styles = StyleSheet.create({
   graphHint: {
     marginTop: 8,
   },
-  input: { paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, minHeight: 48 },
+  input: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    minHeight: 48,
+    textAlignVertical: 'center',
+  },
   addPlace: {
     flexDirection: 'row',
     alignItems: 'center',

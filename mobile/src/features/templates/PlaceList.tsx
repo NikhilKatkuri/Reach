@@ -249,6 +249,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderWidth: 1,
     minHeight: 48,
+    textAlignVertical: 'center',
   },
   suggestionRow: {
     flexDirection: 'row',
@@ -274,6 +275,7 @@ const styles = StyleSheet.create({
   rowInput: {
     paddingVertical: 2,
     minHeight: 28,
+    textAlignVertical: 'center',
   },
   rowActions: {
     flexDirection: 'row',
